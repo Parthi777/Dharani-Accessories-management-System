@@ -1,0 +1,107 @@
+// routes/stock.js — stock catalogue + computed quantities
+const express = require('express');
+const store = require('../lib/store');
+const { requireAuth, requireRole } = require('../middleware/auth');
+
+const router = express.Router();
+router.use(requireAuth);
+
+// Non-admins are locked to their JWT branch.
+function effBranch(req) {
+  if (req.user.role !== 'Admin' && req.user.branch && req.user.branch !== 'ALL') return req.user.branch;
+  return req.query.branch || null;
+}
+
+// GET /api/stock?branch= → stock rows with current qty
+router.get('/', (req, res) => {
+  res.json({ ok: true, data: store.stockWithQty(effBranch(req)) });
+});
+
+// GET /api/stock/vpmap → { vehicle: [partName] }
+router.get('/vpmap', (req, res) => {
+  res.json({ ok: true, data: store.buildVpmap() });
+});
+
+// GET /api/stock/qty/:partName?branch=&partNo= → single current qty
+router.get('/qty/:partName', (req, res) => {
+  const qty = store.currentQty(req.params.partName, req.query.partNo, effBranch(req));
+  if (qty === null) return res.status(404).json({ ok: false, msg: 'Part not found' });
+  res.json({ ok: true, data: { partName: req.params.partName, partNo: req.query.partNo || '', qty } });
+});
+
+// POST /api/stock — Admin only: add new part → returns updated VPMAP
+router.post('/', requireRole('Admin'), async (req, res) => {
+  try {
+    const { vehicle, partName, partNo, source, unitPrice, costPrice, initQty, notes } = req.body || {};
+    if (!vehicle || !partName) return res.status(400).json({ ok: false, msg: 'vehicle and partName are required' });
+    // Same name is allowed if the part number differs; only the exact (name + part no) pair must be unique.
+    if (store.findStock(partName, partNo))
+      return res.status(409).json({ ok: false, msg: 'A part with this name and part number already exists' });
+
+    const id = store.nextSeqId('stock', 'id', 'STK', 4);
+    const row = await store.insert('stock', {
+      id, vehicle, part_name: partName, part_no: partNo || '—', source: source || 'DMS',
+      unit_price: Number(unitPrice) || 0, cost_price: Number(costPrice) || 0,
+      init_qty: parseInt(initQty) || 0, notes: notes || '',
+    });
+    await store.audit(req.user, 'CREATE', 'stock', id, { partName });
+    res.json({ ok: true, data: row, vpmap: store.buildVpmap() });
+  } catch (e) {
+    console.error(e); res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
+// PUT /api/stock/:id — Admin only: edit a catalogue entry.
+// part_name is the cross-table join key, so it is NOT editable here.
+router.put('/:id', requireRole('Admin'), async (req, res) => {
+  try {
+    const s = store.find('stock', x => x.id === req.params.id);
+    if (!s) return res.status(404).json({ ok: false, msg: 'Part not found' });
+    const { vehicle, partNo, source, unitPrice, costPrice, initQty, notes } = req.body || {};
+
+    const patch = {};
+    if (vehicle != null) patch.vehicle = vehicle;
+    if (partNo != null) patch.part_no = partNo || '—';
+    if (source != null) patch.source = source;
+    if (unitPrice != null) patch.unit_price = Number(unitPrice) || 0;
+    if (costPrice != null) patch.cost_price = Number(costPrice) || 0;
+    if (initQty != null) patch.init_qty = parseInt(initQty) || 0;
+    if (notes != null) patch.notes = notes;
+
+    const row = await store.updateByKey('stock', 'id', req.params.id, patch);
+    await store.audit(req.user, 'UPDATE', 'stock', req.params.id, { partName: s.part_name });
+    res.json({ ok: true, data: row, vpmap: store.buildVpmap() });
+  } catch (e) {
+    console.error(e); res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
+// DELETE /api/stock/:id — Admin only: remove a catalogue entry AND its stock
+// movement history (inward + transfers) so re-uploading the same part name
+// starts clean. Sales are kept unless ?purgeSales=1 (financial records).
+// Because everything joins on part_name, leaving inward behind would let an
+// old quantity resurrect when the same name is added again.
+router.delete('/:id', requireRole('Admin'), async (req, res) => {
+  try {
+    const s = store.find('stock', x => x.id === req.params.id);
+    if (!s) return res.status(404).json({ ok: false, msg: 'Part not found' });
+    const name = s.part_name;
+    const key = store.partKey(s.part_name, s.part_no);   // only THIS part (name + part no)
+    const sameItem = r => store.partKey(r.part_name, r.part_no) === key;
+    const purgeSales = req.query.purgeSales === '1' || req.query.purgeSales === 'true';
+
+    const removed = {};
+    await store.deleteByKey('stock', 'id', req.params.id);
+    removed.inward = await store.deleteWhere('inward', sameItem);
+    removed.transfers = await store.deleteWhere('transfers', sameItem);
+    removed.sales = purgeSales ? await store.deleteWhere('sales', sameItem) : 0;
+    const salesKept = purgeSales ? 0 : store.all('sales').filter(sameItem).length;
+
+    await store.audit(req.user, 'DELETE', 'stock', req.params.id, { partName: name, removed, salesKept });
+    res.json({ ok: true, data: { id: req.params.id, removed, salesKept }, vpmap: store.buildVpmap() });
+  } catch (e) {
+    console.error(e); res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
+module.exports = router;
