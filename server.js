@@ -56,17 +56,20 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 
-(async () => {
-  try {
-    await store.init();
-    console.log('PostgreSQL backend ready');
-  } catch (e) {
+// Start the HTTP server FIRST so the health check passes and the SPA loads even
+// while (or if) the database is still connecting. /api routes return 503 until
+// store.ready flips true. This avoids a hung DB connection blocking startup and
+// causing Railway's "Application failed to respond".
+app.listen(PORT, () => console.log('DAMS running on port', PORT));
+
+// Connect to the database in the background.
+store.init()
+  .then(() => console.log('PostgreSQL backend ready'))
+  .catch((e) => {
     store.ready = false;
     store.error = e.message;
     console.error('\n⚠️  Database NOT ready:', e.message);
-    console.error('    The app will still start; set DATABASE_URL and restart.\n');
-  }
-  app.listen(PORT, () => console.log('DAMS running on port', PORT));
-})();
+    console.error('    The app is running; fix DATABASE_URL and redeploy.\n');
+  });
 
 module.exports = app;
