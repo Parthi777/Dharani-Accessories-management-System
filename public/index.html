@@ -520,14 +520,33 @@ function renderStock(){
   const q=($('#stkSearch')?.value||'').toLowerCase();
   const rows=_stockCache.filter(s=>!q||s.part_name.toLowerCase().includes(q)||(s.vehicle||'').toLowerCase().includes(q));
   const low=5; const isAdmin=USER.role==='Admin';
-  const headers=['Vehicle','Part','Part No','Source','Unit','Cost','Qty','Status'].concat(isAdmin?['']:[]);
+  const headers=['Vehicle','Part','Part No','Source','Selling','Cost','Qty','Status'].concat(isAdmin?['']:[]);
   $('#stockTbl').innerHTML = rows.length ? `<div class="tableWrap">${tableHTML(
     headers,
     rows.map(s=>{ const cq=Number(s.current_qty);
       const st = cq<=0?'<span class="pill red">Out</span>':cq<=low?'<span class="pill amber">Low</span>':'<span class="pill green">OK</span>';
       return [s.vehicle,s.part_name,s.part_no,s.source,fmtINR(s.unit_price),fmtINR(s.cost_price),`<b>${cq}</b>`,st]
-        .concat(isAdmin?[`<button class="sm ghost" onclick="editStock('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteStock('${s.id}')">Delete</button>`]:[]);
+        .concat(isAdmin?[`<button class="sm" onclick="updatePrice('${s.id}')">Price</button> <button class="sm ghost" onclick="editStock('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteStock('${s.id}')">Delete</button>`]:[]);
     }))}</div>` : '<p class="muted">No parts.</p>';
+}
+// Quick price update — selling price (unit_price) + cost/unit price (cost_price).
+function updatePrice(id){
+  const s=_stockCache.find(x=>x.id===id); if(!s) return;
+  modal('Update Price',`
+    <p style="margin-top:0">${esc(s.part_name)}${s.part_no&&s.part_no!=='—'?` <span class="muted">(${esc(s.part_no)})</span>`:''}</p>
+    <div class="row">
+      <div class="field"><label>Selling Price (₹)</label><input id="upSell" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div>
+      <div class="field"><label>Unit Price / Cost (₹)</label><input id="upCost" type="number" step="0.01" value="${Number(s.cost_price)||0}"></div>
+    </div>
+    <button onclick="submitPrice('${esc(s.id)}',this)">Save Price</button>`);
+}
+async function submitPrice(id,btn){
+  const body={unitPrice:+$('#upSell').value, costPrice:+$('#upCost').value};
+  if(body.unitPrice<0||body.costPrice<0) return toast('Prices cannot be negative','err');
+  btn.disabled=true; const r=await apiCall('PUT','/stock/'+encodeURIComponent(id),body); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  if(r.vpmap) VPMAP=r.vpmap;
+  toast('Price updated · '+esc(_stockCache.find(x=>x.id===id)?.part_name||'')); closeModal(); loadStock();
 }
 function editStock(id){
   const s=_stockCache.find(x=>x.id===id); if(!s) return;
@@ -537,7 +556,7 @@ function editStock(id){
       <div class="field"><label>Part No</label><input id="esNo" value="${esc(s.part_no||'')}"></div></div>
     <datalist id="esVehList">${vehicleOptions()}</datalist>
     <div class="row"><div class="field"><label>Source</label><select id="esSrc">${['DMS','Local','Import'].map(o=>`<option ${o===s.source?'selected':''}>${o}</option>`).join('')}</select></div>
-      <div class="field"><label>Unit Price</label><input id="esUP" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div>
+      <div class="field"><label>Selling Price</label><input id="esUP" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div>
       <div class="field"><label>Cost Price</label><input id="esCP" type="number" step="0.01" value="${Number(s.cost_price)||0}"></div></div>
     <div class="row"><div class="field"><label>Init Qty</label><input id="esIQ" type="number" value="${parseInt(s.init_qty)||0}"></div>
       <div class="field"><label>Notes</label><input id="esNotes" value="${esc(s.notes||'')}"></div></div>
@@ -575,7 +594,7 @@ function openAddStock(){
     <datalist id="vehList">${vehicleOptions()}</datalist>
     <div class="row"><div class="field"><label>Part No</label><input id="asNo"></div>
       <div class="field"><label>Source</label><select id="asSrc"><option>DMS</option><option>Local</option><option>Import</option></select></div></div>
-    <div class="row"><div class="field"><label>Unit Price</label><input id="asUP" type="number" value="0"></div>
+    <div class="row"><div class="field"><label>Selling Price</label><input id="asUP" type="number" value="0"></div>
       <div class="field"><label>Cost Price</label><input id="asCP" type="number" value="0"></div>
       <div class="field"><label>Init Qty</label><input id="asIQ" type="number" value="0"></div></div>
     <div class="field"><label>Notes</label><input id="asNotes"></div>
