@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>DAMS — Dharani Accessories Management</title>
+<title>Dharani Accessories Management System</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
@@ -87,7 +87,13 @@
   .saleGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,340px);gap:16px;align-items:start}
   .tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
   .tabs button{background:#fff;color:#374151;border:1px solid var(--line);box-shadow:none} .tabs button.active{background:var(--brand);color:#fff;border-color:var(--brand)}
-  @media(max-width:860px){#app{grid-template-columns:1fr} #side{display:none} .panels{grid-template-columns:1fr} .saleGrid{grid-template-columns:1fr}}
+  .brand-title{font-weight:800;font-size:15px;letter-spacing:-.2px;color:var(--txt);line-height:1.1}
+  .brand-tag{font-size:11px;color:var(--muted);font-weight:500;margin-top:2px}
+  .userbox{display:flex;align-items:center;gap:10px}
+  .userbox .who{text-align:right;font-size:12px;line-height:1.25}
+  .avatar{width:34px;height:34px;border-radius:50%;background:var(--brand);color:#fff;display:inline-flex;
+    align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:0 0 auto}
+  @media(max-width:860px){#app{grid-template-columns:1fr} #side{display:none} .panels{grid-template-columns:1fr} .saleGrid{grid-template-columns:1fr} .brand-title{font-size:13px} .userbox .who{display:none}}
 </style>
 </head>
 <body>
@@ -95,8 +101,8 @@
 <!-- ───────── LOGIN ───────── -->
 <div id="login">
   <div class="card">
-    <div class="logo" style="margin-bottom:4px">DAMS<span>·</span></div>
-    <div class="muted" style="margin-bottom:18px">Dharani Accessories Management</div>
+    <div class="logo" style="font-size:19px;line-height:1.2;margin-bottom:4px">Dharani Accessories Management System</div>
+    <div class="muted" style="margin-bottom:18px">Manage Smarter. Grow Faster</div>
     <form id="loginForm">
       <div class="field"><label>Email</label><input id="liEmail" type="email" autocomplete="username" placeholder="you@example.com" required></div>
       <div class="field"><label>Password</label><input id="liPwd" type="password" autocomplete="current-password" required></div>
@@ -109,10 +115,14 @@
 <!-- ───────── APP ───────── -->
 <div id="app">
   <div id="topbar">
-    <div class="logo">DAMS<span>·</span> <span class="muted" style="font-size:13px;font-weight:500" id="branchLabel"></span></div>
-    <div style="display:flex;align-items:center;gap:14px">
-      <div class="who"><div id="whoName" style="font-weight:600"></div><div class="muted" id="whoRole"></div></div>
-      <button class="danger sm" onclick="logout()">Logout</button>
+    <div class="brand">
+      <div class="brand-title">Dharani Accessories Management System</div>
+      <div class="brand-tag">Manage Smarter. Grow Faster <span id="branchLabel"></span></div>
+    </div>
+    <div class="userbox">
+      <div class="avatar" id="whoAvatar"></div>
+      <div class="who"><div id="whoName" style="font-weight:600;color:var(--txt)"></div><div class="muted" id="whoRole"></div></div>
+      <button class="danger sm" onclick="logout()" id="logoutBtn">Logout</button>
     </div>
   </div>
   <div id="side">
@@ -195,6 +205,8 @@ async function boot(){
   $('#login').style.display='none'; $('#app').style.display='grid';
   $('#whoName').textContent = USER.name;
   $('#whoRole').textContent = USER.role.replace(/_/g,' ');
+  $('#whoAvatar').textContent = (USER.name||'?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
+  $('#logoutBtn').title = 'Sign out '+USER.name;
   $('#branchLabel').textContent = USER.branch && USER.branch!=='ALL' ? '· '+USER.branch : '· All branches';
 
   // nav
@@ -488,12 +500,49 @@ let _salesCache=[];
 async function loadSalesList(){
   const r = await apiCall('GET','/sales?limit=1000&branch='+encodeURIComponent(curBranch()||'ALL'));
   if(!r.ok) return toast(r.msg,'err'); _salesCache=r.data;
+  const isAdmin=USER.role==='Admin';
   $('#salesTbl').innerHTML = r.data.length ? `<div class="tableWrap">${tableHTML(
     ['ID','Date','Branch','Invoice','Customer','Part','Qty','Unit','Value','Profit','Staff',''],
     r.data.map(s=>[s.id,fmtDate(s.sale_date),s.branch,s.invoice_no||'—',s.customer_name||'—',s.part_name,s.qty,
       fmtINR(s.unit_price),fmtINR(s.sale_value),fmtINR(s.gross_profit),s.staff_email||'—',
-      `<button class="sm ghost" onclick="printInvoice('${s.id}')">Invoice</button>`]))}</div>`
+      `<button class="sm ghost" onclick="printInvoice('${s.id}')">Invoice</button>`
+      +(isAdmin?` <button class="sm ghost" onclick="editSale('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteSale('${s.id}')">Delete</button>`:'')]))}</div>`
     : '<p class="muted">No sales.</p>';
+}
+function editSale(id){
+  const s=_salesCache.find(x=>x.id===id); if(!s) return;
+  modal('Edit Sale',`
+    <div class="field"><label>Part / Branch (not editable)</label><input value="${esc(s.part_name)}${s.part_no&&s.part_no!=='—'?' ('+esc(s.part_no)+')':''} — ${esc(s.branch)}" disabled></div>
+    <div class="row"><div class="field"><label>Date</label><input id="edDate" type="date" value="${esc(s.sale_date)}"></div>
+      <div class="field"><label>Invoice No</label><input id="edInv" value="${esc(s.invoice_no||'')}"></div></div>
+    <div class="row"><div class="field"><label>Customer Name</label><input id="edCust" value="${esc(s.customer_name||'')}"></div>
+      <div class="field"><label>Vehicle No</label><input id="edVehNo" value="${esc(s.vehicle_no||'')}"></div></div>
+    <div class="row"><div class="field"><label>Qty</label><input id="edQty" type="number" min="1" value="${s.qty}"></div>
+      <div class="field"><label>Unit Price</label><input id="edPrice" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div></div>
+    <div class="field"><label>Remarks</label><input id="edRem" value="${esc(s.remarks||'')}"></div>
+    <button onclick="submitEditSale('${esc(s.id)}',this)">Save Changes</button>`);
+}
+async function submitEditSale(id,btn){
+  const body={saleDate:$('#edDate').value, invoiceNo:$('#edInv').value.trim(), customerName:$('#edCust').value.trim(),
+    vehicleNo:$('#edVehNo').value.trim(), qty:+$('#edQty').value, unitPrice:+$('#edPrice').value, remarks:$('#edRem').value};
+  if(!body.qty||body.qty<1) return toast('Qty must be positive','err');
+  btn.disabled=true; const r=await apiCall('PUT','/sales/'+encodeURIComponent(id),body); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err'); toast('Sale updated'); closeModal(); loadSalesList();
+}
+function deleteSale(id){
+  const s=_salesCache.find(x=>x.id===id); if(!s) return;
+  modal('Delete Sale',`
+    <p>Delete sale <b>${esc(s.id)}</b> &nbsp;<span class="muted">(Invoice ${esc(s.invoice_no||'—')})</span>?</p>
+    <p>${esc(s.part_name)} × ${s.qty} — ${fmtINR(s.sale_value)}</p>
+    <p class="muted">The stock quantity for this part will be restored automatically.</p>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="danger" onclick="confirmDeleteSale('${esc(s.id)}',this)">Delete sale</button>
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function confirmDeleteSale(id,btn){
+  btn.disabled=true; const r=await apiCall('DELETE','/sales/'+encodeURIComponent(id)); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err'); toast('Sale deleted · stock restored'); closeModal(); loadSalesList();
 }
 
 /* ════════════════════ Stock ════════════════════ */
@@ -857,7 +906,7 @@ async function loadBranchesAdmin(){
     ['ID','Name','Location','Manager','Contact','Status',''],
     r.data.map(b=>[b.id,b.name,b.location||'—',b.manager||'—',b.contact||'—',
       b.status==='Active'?'<span class="pill green">Active</span>':'<span class="pill gray">Inactive</span>',
-      `<button class="sm ghost" onclick="editBranch('${b.id}')">Edit</button>`]))}</div>`;
+      `<button class="sm ghost" onclick="editBranch('${b.id}')">Edit</button> <button class="sm danger" onclick="deleteBranch('${b.id}')">Delete</button>`]))}</div>`;
 }
 function openAddBranch(){
   modal('Add Branch',`
@@ -899,6 +948,24 @@ async function submitEditBranch(id,btn){
   const bm=await apiCall('GET','/branches'); if(bm.ok) BRANCHES=bm.data;
   loadBranchesAdmin();
 }
+function deleteBranch(id){
+  const b=_branchCache.find(x=>x.id===id); if(!b) return;
+  modal('Delete Branch',`
+    <p>Delete branch <b>${esc(b.name)}</b>?</p>
+    <p class="muted">Historical records (sales, inward, users) that reference this branch name are kept. Consider setting it Inactive instead if it has history.</p>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="danger" onclick="confirmDeleteBranch('${esc(b.id)}',this)">Delete branch</button>
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function confirmDeleteBranch(id,btn){
+  btn.disabled=true; const r=await apiCall('DELETE','/branches/'+encodeURIComponent(id)); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  const f=r.data&&r.data.refs; const note=f&&(f.users||f.sales||f.inward||f.transfers)?` (kept: ${f.users} users, ${f.sales} sales, ${f.inward} inward, ${f.transfers} transfers)`:'';
+  toast('Branch deleted'+note); closeModal();
+  const bm=await apiCall('GET','/branches'); if(bm.ok) BRANCHES=bm.data;
+  loadBranchesAdmin();
+}
 
 /* ════════════════════ Users ════════════════════ */
 const ROLES=['Admin','Branch_Manager','Sales_Staff','Store_Staff','Accountant'];
@@ -917,7 +984,7 @@ async function loadUsers(){
     ['ID','Name','Email','Role','Branch','Status','Last Login',''],
     r.data.map(u=>[u.id,u.name,u.email,u.role.replace(/_/g,' '),u.branch||'—',
       u.status==='Active'?'<span class="pill green">Active</span>':'<span class="pill gray">Inactive</span>',
-      fmtDate(u.last_login)||'—',`<button class="sm ghost" onclick="editUser('${u.id}')">Edit</button>`]))}</div>`;
+      fmtDate(u.last_login)||'—',`<button class="sm ghost" onclick="editUser('${u.id}')">Edit</button> <button class="sm danger" onclick="deleteUser('${u.id}')">Delete</button>`]))}</div>`;
 }
 function openAddUser(){
   modal('Add User',`
@@ -955,6 +1022,21 @@ async function submitEditUser(id,btn){
   const pwd=$('#euPwd').value; if(pwd) body.password=pwd;
   btn.disabled=true; const r=await apiCall('PUT','/users/'+id,body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err'); toast('User updated'); closeModal(); loadUsers();
+}
+function deleteUser(id){
+  const u=_userCache.find(x=>x.id===id); if(!u) return;
+  if(id===USER.userId) return toast('You cannot delete your own account','err');
+  modal('Delete User',`
+    <p>Delete user <b>${esc(u.name)}</b> <span class="muted">(${esc(u.email)})</span>?</p>
+    <p class="muted">Past sales/inward rows recorded by this user are kept (their email stays on those records).</p>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="danger" onclick="confirmDeleteUser('${esc(u.id)}',this)">Delete user</button>
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function confirmDeleteUser(id,btn){
+  btn.disabled=true; const r=await apiCall('DELETE','/users/'+encodeURIComponent(id)); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err'); toast('User deleted'); closeModal(); loadUsers();
 }
 
 /* ════════════════════ Settings ════════════════════ */

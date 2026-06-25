@@ -76,4 +76,24 @@ router.patch('/:id/status', requireRole('Admin'), async (req, res) => {
   }
 });
 
+// DELETE /api/branches/:id — Admin only. Historical rows referencing the
+// branch name are left intact (just reported).
+router.delete('/:id', requireRole('Admin'), async (req, res) => {
+  try {
+    const b = store.find('branches', x => x.id === req.params.id);
+    if (!b) return res.status(404).json({ ok: false, msg: 'Branch not found' });
+    const refs = {
+      users: store.all('users').filter(u => u.branch === b.name).length,
+      sales: store.all('sales').filter(s => s.branch === b.name).length,
+      inward: store.all('inward').filter(i => i.branch === b.name).length,
+      transfers: store.all('transfers').filter(t => t.from_branch === b.name || t.to_branch === b.name).length,
+    };
+    await store.deleteByKey('branches', 'id', req.params.id);
+    await store.audit(req.user, 'DELETE', 'branch', req.params.id, { name: b.name, refs });
+    res.json({ ok: true, data: { id: req.params.id, refs } });
+  } catch (e) {
+    console.error(e); res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
 module.exports = router;

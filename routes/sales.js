@@ -87,4 +87,63 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (r
   }
 });
 
+// PUT /api/sales/:id — Admin only: edit a sale (part & branch are not editable).
+// Recomputes value/profit and re-validates stock for the new quantity.
+router.put('/:id', requireRole('Admin'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const row = await store.runExclusive(async () => {
+      const sale = store.find('sales', x => x.id === req.params.id);
+      if (!sale) throw { code: 404, msg: 'Sale not found' };
+      const branch = sale.branch;
+
+      const qty = b.qty != null ? parseInt(b.qty) : Number(sale.qty);
+      if (!qty || qty <= 0) throw { code: 400, msg: 'qty must be a positive number' };
+      const unitPrice = b.unitPrice != null ? Number(b.unitPrice) : Number(sale.unit_price);
+      const costPrice = Number(sale.cost_price);
+      const invoiceNo = b.invoiceNo != null ? String(b.invoiceNo).trim() : String(sale.invoice_no || '');
+
+      if (invoiceNo && store.all('sales').some(s => s.id !== sale.id && s.branch === branch && String(s.invoice_no) === invoiceNo))
+        throw { code: 409, msg: `Invoice ${invoiceNo} already used for this branch` };
+
+      // Available if THIS sale didn't exist (add its current qty back).
+      const cur = store.currentQty(sale.part_name, sale.part_no, branch);
+      const availWithoutThis = cur == null ? Infinity : cur + Number(sale.qty);
+      if (qty > availWithoutThis) throw { code: 400, msg: `Insufficient stock. Available: ${availWithoutThis}` };
+
+      const patch = {
+        sale_date: b.saleDate != null ? b.saleDate : sale.sale_date,
+        invoice_no: invoiceNo,
+        customer_name: b.customerName != null ? b.customerName : sale.customer_name,
+        vehicle_no: b.vehicleNo != null ? b.vehicleNo : sale.vehicle_no,
+        qty, unit_price: unitPrice, sale_value: unitPrice * qty, gross_profit: (unitPrice - costPrice) * qty,
+        stock_before: availWithoutThis === Infinity ? sale.stock_before : availWithoutThis,
+        stock_after: availWithoutThis === Infinity ? sale.stock_after : availWithoutThis - qty,
+        remarks: b.remarks != null ? b.remarks : sale.remarks,
+      };
+      return await store.updateNoLock('sales', 'id', sale.id, patch);
+    });
+    await store.audit(req.user, 'UPDATE', 'sales', req.params.id, { qty: row.qty, saleValue: row.sale_value });
+    res.json({ ok: true, data: row });
+  } catch (e) {
+    if (e && e.code) return res.status(e.code).json({ ok: false, msg: e.msg });
+    console.error('sale edit error', e);
+    res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
+// DELETE /api/sales/:id — Admin only. Stock auto-restores (qty is computed).
+router.delete('/:id', requireRole('Admin'), async (req, res) => {
+  try {
+    const sale = store.find('sales', x => x.id === req.params.id);
+    if (!sale) return res.status(404).json({ ok: false, msg: 'Sale not found' });
+    await store.deleteByKey('sales', 'id', req.params.id);
+    await store.audit(req.user, 'DELETE', 'sales', req.params.id, { partName: sale.part_name, qty: sale.qty, invoice: sale.invoice_no });
+    res.json({ ok: true, data: { id: req.params.id } });
+  } catch (e) {
+    console.error('sale delete error', e);
+    res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
 module.exports = router;

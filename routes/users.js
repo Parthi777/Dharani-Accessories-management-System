@@ -89,4 +89,19 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// DELETE /api/users/:id — Admin only. Cannot delete your own account.
+router.delete('/:id', async (req, res) => {
+  try {
+    if (req.params.id === req.user.userId)
+      return res.status(400).json({ ok: false, msg: 'You cannot delete your own account' });
+    const u = store.find('users', x => x.id === req.params.id);
+    if (!u) return res.status(404).json({ ok: false, msg: 'User not found' });
+    await store.deleteByKey('users', 'id', req.params.id);
+    await store.audit(req.user, 'DELETE', 'user', req.params.id, { email: u.email });
+    res.json({ ok: true, data: { id: req.params.id } });
+  } catch (e) {
+    console.error(e); res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
 module.exports = router;
