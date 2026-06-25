@@ -43,7 +43,9 @@
   /* Login */
   #login{display:flex;align-items:center;justify-content:center;height:100vh;padding:20px;background:var(--bg)}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:24px;box-shadow:var(--shadow)}
-  #login .card{width:360px;box-shadow:0 10px 40px rgba(16,24,40,.10)}
+  #login .card{width:100%;max-width:360px;box-shadow:0 10px 40px rgba(16,24,40,.10)}
+  #hamburger{display:none;background:transparent;color:var(--txt);border:none;box-shadow:none;font-size:20px;line-height:1;padding:6px 8px;cursor:pointer}
+  #navBackdrop{display:none}
   .logo{font-size:21px;font-weight:800;letter-spacing:-.2px}
   .logo span{color:var(--brand)}
 
@@ -93,7 +95,29 @@
   .userbox .who{text-align:right;font-size:12px;line-height:1.25}
   .avatar{width:34px;height:34px;border-radius:50%;background:var(--brand);color:#fff;display:inline-flex;
     align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:0 0 auto}
-  @media(max-width:860px){#app{grid-template-columns:1fr} #side{display:none} .panels{grid-template-columns:1fr} .saleGrid{grid-template-columns:1fr} .brand-title{font-size:13px} .userbox .who{display:none}}
+  @media(max-width:860px){
+    #app{grid-template-columns:1fr}
+    #hamburger{display:inline-flex;align-items:center}
+    /* sidebar becomes a slide-in drawer */
+    #side{position:fixed;top:60px;left:0;bottom:0;width:240px;z-index:60;
+      transform:translateX(-100%);transition:transform .22s ease;box-shadow:0 12px 30px rgba(0,0,0,.25)}
+    body.navopen #side{transform:translateX(0)}
+    #navBackdrop{display:block;position:fixed;inset:60px 0 0 0;background:rgba(15,23,42,.45);z-index:55;
+      opacity:0;pointer-events:none;transition:opacity .22s}
+    body.navopen #navBackdrop{opacity:1;pointer-events:auto}
+    .panels{grid-template-columns:1fr} .saleGrid{grid-template-columns:1fr}
+    .userbox .who{display:none}
+    .brand{min-width:0}
+    .brand-title{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .brand-tag{display:none}
+    #topbar{padding:0 10px} #main{padding:14px}
+    h1{font-size:19px}
+    .kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .kpi .v{font-size:21px}
+    .modal{min-width:auto;width:calc(100vw - 28px)}
+    th,td{padding:8px 9px}
+    .filters .field{min-width:130px}
+  }
 </style>
 </head>
 <body>
@@ -115,9 +139,12 @@
 <!-- ───────── APP ───────── -->
 <div id="app">
   <div id="topbar">
-    <div class="brand">
-      <div class="brand-title">Dharani Accessories Management System</div>
-      <div class="brand-tag">Manage Smarter. Grow Faster <span id="branchLabel"></span></div>
+    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+      <button id="hamburger" onclick="toggleNav()" aria-label="Menu">☰</button>
+      <div class="brand" style="min-width:0">
+        <div class="brand-title">Dharani Accessories Management System</div>
+        <div class="brand-tag">Manage Smarter. Grow Faster <span id="branchLabel"></span></div>
+      </div>
     </div>
     <div class="userbox">
       <div class="avatar" id="whoAvatar"></div>
@@ -128,6 +155,7 @@
   <div id="side">
     <nav class="nav" id="nav"></nav>
   </div>
+  <div id="navBackdrop" onclick="closeNav()"></div>
   <div id="main"></div>
 </div>
 
@@ -177,6 +205,8 @@ $('#loginForm').addEventListener('submit', async e=>{
   localStorage.setItem('dams_token',TOKEN); localStorage.setItem('dams_user',JSON.stringify(USER));
   await boot();
 });
+function toggleNav(){ document.body.classList.toggle('navopen'); }
+function closeNav(){ document.body.classList.remove('navopen'); }
 function logout(){ apiCall('POST','/auth/logout').finally(doLogout); }
 function doLogout(){
   TOKEN=''; USER=null;
@@ -214,7 +244,7 @@ async function boot(){
   NAV.filter(n=>n.roles.includes(USER.role)).forEach(n=>{
     const a = el('a',{href:'#'+n.id}); a.dataset.id=n.id;
     a.innerHTML = `<span class="ico">${n.ico}</span><span>${n.label}</span>`;
-    a.onclick = e=>{ e.preventDefault(); go(n.id); };
+    a.onclick = e=>{ e.preventDefault(); closeNav(); go(n.id); };
     nav.appendChild(a);
   });
 
