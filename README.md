@@ -38,6 +38,25 @@ psql -d dams -c "DROP TABLE IF EXISTS branches, users, stock, sales, inward, tra
 `admin@tvs.local` / `Admin@123` (Admin, all branches). Change it via
 **Users → Edit** after first login.
 
+## Deploy in one command (Docker)
+
+Requires Docker. From the project root:
+
+```bash
+# 1. ensure a JWT_SECRET is set (the repo .env already has one for local dev;
+#    for a fresh clone: cp .env.example .env and put a long random value)
+# 2. bring up Postgres + the app together:
+docker compose up -d --build
+```
+
+Open <http://localhost:3000> → log in with `admin@tvs.local` / `Admin@123`.
+The schema is created + seeded on first boot; data persists in the `dams_db` volume.
+
+```bash
+docker compose logs -f app   # view logs
+docker compose down          # stop (add -v to also delete the data volume)
+```
+
 ## Deploy to Railway
 
 1. **New Project → Deploy from GitHub repo** → pick this repo.
