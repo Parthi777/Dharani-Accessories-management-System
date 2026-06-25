@@ -40,14 +40,26 @@ psql -d dams -c "DROP TABLE IF EXISTS branches, users, stock, sales, inward, tra
 
 ## Deploy to Railway
 
-1. Push this repo to GitHub.
-2. Railway → New Project → Deploy from GitHub repo.
-3. Add the **PostgreSQL** plugin — it sets `DATABASE_URL` automatically.
-4. **Variables** → add `JWT_SECRET` (any long random string) and `NODE_ENV=production`.
-5. Railway auto-deploys on push to `main`. The schema is created + seeded on
-   first boot. Health check: `GET /health` → `{ status, store: "ready" | "not-configured" }`.
+1. **New Project → Deploy from GitHub repo** → pick this repo.
+2. In the project, **+ New → Database → Add PostgreSQL**.
+3. Open the **app service → Variables** and add:
+   - `JWT_SECRET` — any long random string
+     (`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`)
+   - `NODE_ENV` = `production`
+   - **`DATABASE_URL`** — add a *reference variable* pointing to the Postgres
+     service: set it to `${{Postgres.DATABASE_URL}}` (so the app and DB are linked).
+4. Deploy. On first boot the app **creates the schema and seeds** your branches
+   + admin user (`store.init()` runs `CREATE TABLE IF NOT EXISTS` — no migration step).
+5. Railway re-deploys automatically on every push to `main`.
 
-No migration step is needed — `store.init()` runs the DDL (`CREATE TABLE IF NOT EXISTS`).
+Config that ships in the repo ([railway.json](railway.json)):
+`npm start`, health check `GET /health`, restart-on-failure.
+
+- **SSL** is handled automatically ([lib/db.js](lib/db.js)): off for the Railway
+  private network (`*.railway.internal`) and localhost, on for public/managed
+  hosts. Override with `PGSSL=require` or `PGSSL=disable` if needed.
+- **Login** after deploy: `admin@tvs.local` / `Admin@123`.
+- Health: `GET /health` → `{ status, store: "ready" | "not-configured" }`.
 
 ## Layout
 

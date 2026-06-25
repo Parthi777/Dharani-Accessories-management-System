@@ -1,9 +1,14 @@
-// server.js — DAMS Express entry point (Google Sheets backend)
+// server.js — DAMS Express entry point (PostgreSQL backend)
 require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const store = require('./lib/store');
+
+// Fail-loud reminders for the two required env vars (the app still boots so the
+// health check and SPA work, but these must be set for login/data to work).
+if (!process.env.JWT_SECRET) console.warn('⚠️  JWT_SECRET is not set — set it in your environment / Railway Variables (login will fail without it).');
+if (!process.env.DATABASE_URL) console.warn('⚠️  DATABASE_URL is not set — add the Railway PostgreSQL plugin or set it locally.');
 
 const app = express();
 app.use(cors());
