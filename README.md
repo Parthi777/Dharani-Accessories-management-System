@@ -3,6 +3,8 @@
 TVS accessories inventory for the branches of Bhavani Dharani TVS.
 Node.js + Express, **PostgreSQL** backend, single-page frontend, deploys to Railway.
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/Parthi777/Dharani-Accessories-management-System)
+
 The app keeps an in-memory cache over Postgres (loaded on boot, synced on every
 write) so dashboard/analytics aggregation runs in JS. The schema is created
 automatically on first boot and seeded with the branches + admin user.
@@ -57,7 +59,31 @@ docker compose logs -f app   # view logs
 docker compose down          # stop (add -v to also delete the data volume)
 ```
 
-## Deploy to Railway
+## One-click Deploy on Railway
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https://github.com/Parthi777/Dharani-Accessories-management-System)
+
+Clicking the button starts a Railway project from this repo. To finish:
+
+1. **+ New → Database → PostgreSQL** (adds Postgres).
+2. App service → **Variables**:
+   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
+   - `JWT_SECRET` = a long random string
+   - `NODE_ENV` = `production`
+3. The app boots, creates the schema, and seeds your branches + admin.
+   Log in with `admin@tvs.local` / `Admin@123`.
+
+### Make it a *fully* automatic one-click (publish a template)
+
+So the button provisions the app **and** Postgres **and** the variables with no
+manual steps, publish a Railway template once:
+
+1. Deploy the project (steps above) so app + Postgres are running and linked.
+2. Project → **Settings → Create Template** (a.k.a. "Publish as Template").
+3. Railway gives you a URL like `https://railway.com/template/abc123` — replace
+   the two button links in this README with it (and send it to me to wire up).
+
+## Deploy to Railway (manual)
 
 1. **New Project → Deploy from GitHub repo** → pick this repo.
 2. In the project, **+ New → Database → Add PostgreSQL**.
