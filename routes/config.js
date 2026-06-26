@@ -23,8 +23,13 @@ router.get('/', (req, res) => {
       gstin: store.getSetting('GSTIN', ''),
       // Filter / form option lists.
       categories: distinct('stock', 'category'),
-      // Supplier master (active names), used by stock/inward forms and the dashboard filter.
-      suppliers: store.all('suppliers').filter(s => s.status === 'Active').map(s => s.name).sort((a, b) => a.localeCompare(b)),
+      // Suppliers for the dropdowns/filter: the active master names PLUS any supplier
+      // already seen on stock (source) or inward — so upload-derived suppliers also show.
+      suppliers: [...new Set([
+        ...store.all('suppliers').filter(s => s.status === 'Active').map(s => s.name),
+        ...store.all('stock').map(s => s.source),
+        ...store.all('inward').map(i => i.supplier),
+      ].map(x => (x || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
     },
   });
 });

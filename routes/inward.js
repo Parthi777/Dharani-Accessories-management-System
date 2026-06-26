@@ -101,12 +101,12 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
       const existingSigs = new Set(store.all('inward').map(r => sigOf(r.inward_date, r.branch, r.part_name, r.part_no, r.vehicle, r.qty, r.supplier, r.batch_no)));
       const seenSigs = new Set();
 
-      const ensure = (partName, vehicle, partNo, cost, selling) => {
+      const ensure = (partName, vehicle, partNo, cost, selling, supplier) => {
         const k = store.partKey(partName, partNo, vehicle);
         let p = store.findStock(partName, partNo, vehicle) || newStock.find(s => store.partKey(s.part_name, s.part_no, s.vehicle) === k);
         if (p) return p;
         p = { id: 'STK' + pad(++stockMax, 4), vehicle: vehicle || 'Unassigned', part_name: partName,
-              part_no: partNo || '—', source: '',
+              part_no: partNo || '—', source: (supplier || '').trim(),
               unit_price: selling != null ? selling : 0, cost_price: cost != null ? cost : 0,
               init_qty: 0, notes: '' };
         newStock.push(p);
@@ -136,7 +136,7 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
           }
           seenSigs.add(sig);
         }
-        const part = ensure(partName, b.vehicle, b.partNo, cost, selling);
+        const part = ensure(partName, b.vehicle, b.partNo, cost, selling, b.supplier);
         const unitCost = cost != null ? cost : Number(part.cost_price);
         inwardObjs.push({
           id: nextInwId(ddMMyy(inwardDate)), inward_date: inwardDate, branch,
