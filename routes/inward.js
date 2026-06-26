@@ -35,6 +35,16 @@ function maxSeq(table, prefix) {
   return m;
 }
 
+// GET /api/inward?branch=&limit= — inward history (newest first)
+router.get('/', (req, res) => {
+  const branch = effBranch(req, req.query.branch);
+  const limit = Math.min(parseInt(req.query.limit) || 500, 2000);
+  let rows = store.all('inward');
+  if (branch && branch !== 'ALL') rows = rows.filter(r => r.branch === branch);
+  rows.sort((a, b) => (String(b.inward_date) + (b.created_at || '')).localeCompare(String(a.inward_date) + (a.created_at || '')));
+  res.json({ ok: true, data: rows.slice(0, limit) });
+});
+
 // POST /api/inward — single inward entry
 router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (req, res) => {
   try {

@@ -1007,11 +1007,12 @@ async function confirmDeleteSale(id,btn){
 async function viewStock(){
   const m=$('#main');
   const canAdd = USER.role==='Admin';
-  m.innerHTML=`<h1>Stock</h1><p class="sub">Quantities are computed live (init + inward − sales).</p>
+  m.innerHTML=`<h1>Stock</h1><p class="sub">Quantities are computed live (init + inward − sales). Pick a branch to see only what's available there.</p>
     <div class="filters"><div class="field"><label>Branch</label>${branchPicker(true)}</div>
       <div class="field"><label>Search</label><input id="stkSearch" placeholder="part / vehicle"></div>
       <button onclick="loadStock()">Apply</button>
       ${expMenu('doListExport','stock')}
+      ${canAdd?'<button class="danger" id="delSelBtn" onclick="deleteSelectedStock()" disabled>Delete selected</button>':''}
       ${canAdd?'<button class="ok" onclick="openAddStock()">+ Add Part</button>':''}</div>
     <div id="stockTbl"></div>`;
   if($('#fBranch')) $('#fBranch').onchange=loadStock;
@@ -1025,16 +1026,48 @@ async function loadStock(){
 }
 function renderStock(){
   const q=($('#stkSearch')?.value||'').toLowerCase();
-  const rows=_stockCache.filter(s=>!q||s.part_name.toLowerCase().includes(q)||(s.vehicle||'').toLowerCase().includes(q));
+  const sel=$('#fBranch'); const branchSel = !!(sel && sel.value && sel.value!=='ALL');   // a branch picked in the dropdown → only available
+  let rows=_stockCache.filter(s=>!q||s.part_name.toLowerCase().includes(q)||(s.vehicle||'').toLowerCase().includes(q));
+  if(branchSel) rows=rows.filter(s=>Number(s.current_qty)>0);
   const low=5; const isAdmin=USER.role==='Admin';
-  const headers=['Vehicle','Part','Part No','Supplier','Selling','Cost','Qty','Status'].concat(isAdmin?['']:[]);
+  const headers=(isAdmin?['<input type="checkbox" onclick="toggleAllStock(this)" title="Select all">']:[])
+    .concat(['Vehicle','Part','Part No','Supplier','Selling','Cost','Qty','Status']).concat(isAdmin?['']:[]);
   $('#stockTbl').innerHTML = rows.length ? `<div class="tableWrap">${tableHTML(
     headers,
     rows.map(s=>{ const cq=Number(s.current_qty);
       const st = cq<=0?'<span class="pill red">Out</span>':cq<=low?'<span class="pill amber">Low</span>':'<span class="pill green">OK</span>';
-      return [s.vehicle,s.part_name,s.part_no,s.source,fmtINR(s.unit_price),fmtINR(s.cost_price),`<b>${cq}</b>`,st]
+      return (isAdmin?[`<input type="checkbox" class="stkChk" value="${esc(s.id)}" onchange="updateStkSel()">`]:[])
+        .concat([esc(s.vehicle),esc(s.part_name),esc(s.part_no),esc(s.source),fmtINR(s.unit_price),fmtINR(s.cost_price),`<b>${cq}</b>`,st])
         .concat(isAdmin?[`<button class="sm" onclick="updatePrice('${s.id}')">Price</button> <button class="sm ghost" onclick="editStock('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteStock('${s.id}')">Delete</button>`]:[]);
-    }))}</div>` : '<p class="muted">No parts.</p>';
+    }))}</div>` : `<p class="muted">${branchSel?'No available stock in this branch.':'No parts.'}</p>`;
+  updateStkSel();
+}
+// ── Multi-select delete ──
+function toggleAllStock(cb){ document.querySelectorAll('.stkChk').forEach(c=>c.checked=cb.checked); updateStkSel(); }
+function selectedStockIds(){ return [...document.querySelectorAll('.stkChk:checked')].map(c=>c.value); }
+function updateStkSel(){ const n=selectedStockIds().length; const b=$('#delSelBtn'); if(b){ b.textContent='Delete selected'+(n?` (${n})`:''); b.disabled=!n; } }
+let _bulkDelIds=[];
+function deleteSelectedStock(){
+  const ids=selectedStockIds(); if(!ids.length) return toast('Select parts to delete','err');
+  _bulkDelIds=ids;
+  const parts=_stockCache.filter(s=>ids.includes(s.id));
+  modal('Delete '+ids.length+' part'+(ids.length>1?'s':''),`
+    <p>Delete these <b>${ids.length}</b> part${ids.length>1?'s':''}? Their inward &amp; transfer history is removed too.</p>
+    <div class="tableWrap" style="max-height:240px"><table><tbody>${parts.map(s=>`<tr><td>${esc(s.part_name)}</td><td class="muted">${esc(s.vehicle||'')}</td><td>${esc(s.part_no||'—')}</td></tr>`).join('')}</tbody></table></div>
+    <label style="display:flex;align-items:center;gap:8px;margin:12px 0"><input type="checkbox" id="bdPurge" style="width:auto"> Also delete their sales history</label>
+    <div style="display:flex;gap:8px"><button class="danger" onclick="confirmBulkDeleteStock(this)">Delete ${ids.length}</button>
+      <button class="ghost" onclick="closeModal()">Cancel</button></div>`);
+}
+async function confirmBulkDeleteStock(btn){
+  const purgeSales=!!($('#bdPurge')&&$('#bdPurge').checked);
+  btn.disabled=true;
+  const r=await apiCall('POST','/stock/bulk-delete',{ids:_bulkDelIds,purgeSales});
+  btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  if(r.vpmap) VPMAP=r.vpmap;
+  const rm=r.data&&r.data.removed; const note=rm&&(rm.inward||rm.transfers||rm.sales)?` (removed ${rm.inward} inward, ${rm.transfers} transfers${rm.sales?', '+rm.sales+' sales':''})`:'';
+  toast(`Deleted ${r.data.deleted} part${r.data.deleted===1?'':'s'}`+note);
+  closeModal(); loadStock();
 }
 // Quick price update — selling price (unit_price) + cost/unit price (cost_price).
 function updatePrice(id){
@@ -1195,9 +1228,29 @@ async function viewBulk(){
         <button class="ok hidden" id="bSubmit" onclick="submitBulk(this)">Upload</button>
       </div>
       <div id="bPreview" style="margin-top:14px"></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="barRow"><h3 style="margin:0">All Inward Records</h3>
+        <div style="display:flex;gap:8px;align-items:center"><span id="inwExp"></span>
+          <button class="ghost sm" onclick="loadInwardHistory()">Refresh</button></div></div>
+      <div id="inwHist"><p class="muted">Loading…</p></div>
     </div>`;
   $('#bDate').value=new Date().toISOString().slice(0,10);
   $('#bFile').onchange=e=>{ const f=e.target.files[0]; if(!f) return; readBulkFile(f); };
+  loadInwardHistory();
+}
+async function loadInwardHistory(){
+  const box=$('#inwHist'); if(!box) return;
+  const r=await apiCall('GET','/inward?branch=ALL&limit=1000');
+  if(!r.ok){ box.innerHTML='<p class="muted">Could not load inward records.</p>'; return; }
+  const rows=r.data;
+  const exp=$('#inwExp');
+  if(!rows.length){ box.innerHTML='<p class="muted">No inward records yet.</p>'; if(exp) exp.innerHTML=''; return; }
+  const cols=['inward_date','branch','vehicle','part_name','part_no','qty','supplier','unit_cost','total_cost'];
+  const headers=['Date','Branch','Vehicle','Part','Part No','Qty','Supplier','Unit Cost','Total Cost'];
+  if(exp) exp.innerHTML=exportBar(headers, rows.map(s=>cols.map(c=>s[c])), 'inward');
+  box.innerHTML=`<p class="muted" style="margin:0 0 8px">${rows.length} record${rows.length>1?'s':''} (newest first)</p>`
+    +`<div class="tableWrap">${tableHTML(headers, rows.map(s=>[fmtDate(s.inward_date),esc(s.branch),esc(s.vehicle),esc(s.part_name),esc(s.part_no),s.qty,esc(s.supplier||'—'),fmtINR(s.unit_cost),fmtINR(s.total_cost)]))}</div>`;
 }
 // Route an uploaded file to the right parser by extension.
 function readBulkFile(f){
@@ -1284,6 +1337,7 @@ async function submitBulk(btn){
   btn.disabled=true; const r=await apiCall('POST','/inward/bulk',{rows,force:false}); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
   if(r.vpmap) VPMAP=r.vpmap;
+  loadInwardHistory();
   const dups=r.data.duplicates||[]; _lastDups=dups;
   if(dups.length){
     toast(`${r.data.saved} uploaded · ${dups.length} duplicate${dups.length>1?'s':''} skipped`,'err');
@@ -1307,6 +1361,7 @@ async function forceBulk(btn){
   if(!r.ok) return toast(r.msg||'Failed','err');
   if(r.vpmap) VPMAP=r.vpmap;
   toast(`Uploaded ${r.data.saved} duplicate row${r.data.saved===1?'':'s'}`);
+  loadInwardHistory();
   resetBulk();
 }
 function resetBulk(){ $('#bText').value=''; $('#bPreview').innerHTML=''; $('#bSubmit').classList.add('hidden'); _bulkRows=[]; _lastDups=[]; }

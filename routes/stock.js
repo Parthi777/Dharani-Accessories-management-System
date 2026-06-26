@@ -52,6 +52,34 @@ router.post('/', requireRole('Admin'), async (req, res) => {
   }
 });
 
+// POST /api/stock/bulk-delete — Admin: delete several parts at once. Like the
+// single delete, it removes each part's inward + transfer history; sales are kept
+// unless purgeSales is set.
+router.post('/bulk-delete', requireRole('Admin'), async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+    const purgeSales = !!(req.body && (req.body.purgeSales === true || req.body.purgeSales === '1'));
+    if (!ids.length) return res.status(400).json({ ok: false, msg: 'No parts selected' });
+
+    let deleted = 0; const removed = { inward: 0, transfers: 0, sales: 0 };
+    for (const id of ids) {
+      const s = store.find('stock', x => x.id === id);
+      if (!s) continue;
+      const key = store.partKey(s.part_name, s.part_no, s.vehicle);
+      const sameItem = r => store.partKey(r.part_name, r.part_no, r.vehicle) === key;
+      await store.deleteByKey('stock', 'id', id);
+      removed.inward += await store.deleteWhere('inward', sameItem);
+      removed.transfers += await store.deleteWhere('transfers', sameItem);
+      removed.sales += purgeSales ? await store.deleteWhere('sales', sameItem) : 0;
+      deleted++;
+    }
+    await store.audit(req.user, 'DELETE', 'stock', ids.join(','), { bulk: true, deleted, removed, purgeSales });
+    res.json({ ok: true, data: { deleted, removed }, vpmap: store.buildVpmap() });
+  } catch (e) {
+    console.error(e); res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
 // PUT /api/stock/:id — Admin only: edit a catalogue entry.
 // part_name is the cross-table join key, so it is NOT editable here.
 router.put('/:id', requireRole('Admin'), async (req, res) => {
