@@ -414,7 +414,7 @@ function fmtCell(col,val){
 
 /* ════════════════════ New Sale ════════════════════ */
 function vehicleOptions(){ return Object.keys(VPMAP).sort().map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(''); }
-let _previewSale=null, _salePart=null, _transferPart=null, STOCK=[], _saleItems=[];
+let _previewSale=null, _salePart=null, _transferPart=null, STOCK=[], _saleItems=[], _transferItems=[];
 async function fetchStockList(){ const r=await apiCall('GET','/stock?branch=ALL'); STOCK = r.ok ? r.data : []; return STOCK; }
 // Distinct vehicles present in the live stock catalogue.
 function stockVehicles(){ return [...new Set(STOCK.map(s=>s.vehicle))].filter(Boolean).sort(); }
@@ -925,25 +925,56 @@ async function viewTransfer(){
         <div class="field"><label>From Branch</label>${isAdmin?`<select id="tFrom"><option value="">— select —</option>${branchOptions(false)}</select>`:`<input value="${esc(USER.branch)}" disabled>`}</div>
         <div class="field"><label>To Branch</label><select id="tTo"><option value="">— select —</option>${branchOptions(false)}</select></div>
       </div>
+      <div style="border-top:1px solid var(--line);margin:4px 0 12px"></div>
       <div class="row">
-        <div class="field"><label>Vehicle</label><select id="tVeh"><option value="">— select —</option>${vehicleOptions()}</select></div>
+        <div class="field"><label>Vehicle</label><select id="tVeh"><option value="">— select —</option></select></div>
         <div class="field"><label>Part</label><select id="tPart"><option value="">— select vehicle —</option></select></div>
       </div>
-      <div class="row">
+      <div class="row" style="align-items:end">
         <div class="field"><label>Available (from branch)</label><input id="tAvail" disabled></div>
         <div class="field"><label>Qty</label><input id="tQty" type="number" min="1" value="1"></div>
+        <div class="field" style="flex:0 0 auto;min-width:auto"><label>&nbsp;</label><button class="ok" type="button" onclick="addTransferItem()">+ Add item</button></div>
       </div>
-      <div class="field"><label>Remarks</label><input id="tRem"></div>
+      <div id="transferItems"></div>
+      <div class="field" style="margin-top:12px"><label>Remarks</label><input id="tRem"></div>
       <button onclick="submitTransfer(this)">Transfer Stock</button>
     </div>
     <div class="panel" style="margin-top:16px"><h3>Recent Transfers</h3><div id="tList"></div></div>`;
   $('#tDate').value=new Date().toISOString().slice(0,10);
+  _transferItems=[];
   await fetchStockList();
   $('#tVeh').innerHTML='<option value="">— select —</option>'+stockVehicles().map(v=>`<option>${esc(v)}</option>`).join('');
   $('#tVeh').onchange=()=>{ $('#tPart').innerHTML=partOptionsFor($('#tVeh').value); $('#tAvail').value=''; _transferPart=null; };
   $('#tPart').onchange=loadTransferAvail;
-  const fromSel=$('#tFrom'); if(fromSel) fromSel.onchange=loadTransferAvail;
+  // Availability is per source branch — changing it clears the pending items.
+  const fromSel=$('#tFrom'); if(fromSel) fromSel.onchange=()=>{ _transferItems=[]; renderTransferItems(); loadTransferAvail(); };
+  renderTransferItems();
   loadTransfers();
+}
+function addTransferItem(){
+  if(!curFrom()) return toast('Select the source branch first','err');
+  if(!_transferPart) return toast('Select a part first','err');
+  const qty=+$('#tQty').value||0;
+  if(qty<1) return toast('Enter a quantity','err');
+  const avail=+$('#tAvail').value||0;
+  const ex=_transferItems.find(it=>it.partName===_transferPart.part_name&&it.partNo===_transferPart.part_no);
+  const already=ex?ex.qty:0;
+  if(qty+already>avail) return toast('Insufficient stock. Available '+avail+(already?', already added '+already:''),'err');
+  if(ex) ex.qty+=qty;
+  else _transferItems.push({ vehicle:_transferPart.vehicle, partName:_transferPart.part_name, partNo:_transferPart.part_no, qty });
+  renderTransferItems();
+  $('#tPart').value=''; $('#tQty').value=1; $('#tAvail').value=''; _transferPart=null;
+}
+function removeTransferItem(i){ _transferItems.splice(i,1); renderTransferItems(); }
+function renderTransferItems(){
+  const box=$('#transferItems'); if(!box) return;
+  if(!_transferItems.length){ box.innerHTML='<p class="muted" style="margin:8px 0">No parts added yet — pick a part and click <b>+ Add item</b>. You can transfer several parts at once.</p>'; return; }
+  box.innerHTML=`<div class="tableWrap" style="max-height:none;margin-top:4px"><table>
+    <thead><tr><th>Part</th><th>Qty</th><th></th></tr></thead>
+    <tbody>${_transferItems.map((it,i)=>`<tr>
+      <td>${esc(it.partName)}${it.partNo&&it.partNo!=='—'?' <span class="muted">'+esc(it.partNo)+'</span>':''}</td>
+      <td>${it.qty}</td><td class="right"><button class="sm danger" type="button" onclick="removeTransferItem(${i})">✕</button></td></tr>`).join('')}
+    </tbody></table></div>`;
 }
 function curFrom(){ const s=$('#tFrom'); return s ? s.value : USER.branch; }
 async function loadTransferAvail(){
@@ -955,19 +986,18 @@ async function loadTransferAvail(){
   if(r.ok) $('#tAvail').value=r.data.qty;
 }
 async function submitTransfer(btn){
-  const s=_transferPart;
-  const body={transferDate:$('#tDate').value,fromBranch:curFrom(),toBranch:$('#tTo').value,
-    vehicle:s?s.vehicle:$('#tVeh').value,partName:s?s.part_name:'',partNo:s?s.part_no:undefined,
-    qty:+$('#tQty').value,remarks:$('#tRem').value||undefined};
-  if(!body.fromBranch) return toast('Select source branch','err');
-  if(!body.toBranch) return toast('Select destination branch','err');
-  if(body.fromBranch===body.toBranch) return toast('Source and destination must differ','err');
-  if(!body.partName) return toast('Select a part','err');
-  if(!body.qty||body.qty<1) return toast('Enter quantity','err');
-  btn.disabled=true; const r=await apiCall('POST','/transfers',body); btn.disabled=false;
+  if(!_transferItems.length) return toast('Add at least one part to transfer','err');
+  const from=curFrom(), to=$('#tTo').value;
+  if(!from) return toast('Select source branch','err');
+  if(!to) return toast('Select destination branch','err');
+  if(from===to) return toast('Source and destination must differ','err');
+  const body={ transferDate:$('#tDate').value, fromBranch:from, toBranch:to, remarks:$('#tRem').value||undefined,
+    items:_transferItems.map(it=>({ partName:it.partName, partNo:it.partNo, qty:it.qty })) };
+  btn.disabled=true; const r=await apiCall('POST','/transfers/bulk',body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
-  toast('Transferred '+r.data.qty+' · '+r.data.id);
-  $('#tQty').value=1; $('#tRem').value=''; loadTransferAvail(); loadTransfers();
+  toast('Transferred '+r.data.rows.length+' part'+(r.data.rows.length>1?'s':'')+' from '+from+' to '+to);
+  _transferItems=[]; renderTransferItems();
+  $('#tQty').value=1; $('#tRem').value=''; $('#tAvail').value=''; _transferPart=null; loadTransfers();
 }
 async function loadTransfers(){
   const r=await apiCall('GET','/transfers?limit=100');

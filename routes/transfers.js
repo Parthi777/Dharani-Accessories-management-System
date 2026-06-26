@@ -64,4 +64,61 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (r
   }
 });
 
+// POST /api/transfers/bulk — move several parts in one batch (one lock, cumulative
+// stock checks). Same part listed twice is merged (qty summed).
+router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const fromBranch = lockedBranch(req) || b.fromBranch;
+    const toBranch = b.toBranch;
+    const date = b.transferDate || today();
+    const items = Array.isArray(b.items) ? b.items : [];
+
+    if (!fromBranch || !toBranch) return res.status(400).json({ ok: false, msg: 'fromBranch and toBranch are required' });
+    if (fromBranch === toBranch) return res.status(400).json({ ok: false, msg: 'Source and destination branches must be different' });
+    if (!items.length) return res.status(400).json({ ok: false, msg: 'Add at least one item' });
+
+    const names = new Set(store.all('branches').map(x => x.name));
+    if (!names.has(fromBranch)) return res.status(400).json({ ok: false, msg: 'Unknown source branch' });
+    if (!names.has(toBranch)) return res.status(400).json({ ok: false, msg: 'Unknown destination branch' });
+
+    const merged = [];
+    for (const it of items) {
+      const k = (it.partName || '') + '|' + (it.partNo || '');
+      const ex = merged.find(m => ((m.partName || '') + '|' + (m.partNo || '')) === k);
+      if (ex) ex.qty = parseInt(ex.qty) + parseInt(it.qty);
+      else merged.push({ ...it });
+    }
+
+    const rows = await store.runExclusive(async () => {
+      const out = [];
+      for (const it of merged) {
+        const partName = it.partName;
+        const qty = parseInt(it.qty);
+        if (!partName || !qty || qty <= 0) throw { code: 400, msg: 'Each item needs a part and a positive qty' };
+        const part = store.findStock(partName, it.partNo);
+        if (!part) throw { code: 404, msg: `Part not found: ${partName}` };
+        const avail = store.currentQty(partName, part.part_no, fromBranch);
+        if (avail < qty) throw { code: 400, msg: `Insufficient stock in ${fromBranch} for ${partName}. Available: ${avail}` };
+        const id = store.nextTxnId('transfers', 'TR', ddMMyy(date));
+        const [saved] = await store.appendNoLock('transfers', {
+          id, transfer_date: date, part_name: partName, from_branch: fromBranch, to_branch: toBranch,
+          qty, vehicle: part.vehicle, part_no: part.part_no, staff_email: req.user.email, remarks: it.remarks || b.remarks || '',
+        });
+        out.push(saved);
+      }
+      return out;
+    });
+
+    await store.audit(req.user, 'TRANSFER', 'transfers', rows.map(r => r.id).join(','),
+      { items: rows.length, from: fromBranch, to: toBranch, qty: rows.reduce((t, r) => t + Number(r.qty || 0), 0) });
+    res.json({ ok: true, data: { rows } });
+  } catch (e) {
+    if (e && typeof e.code === 'number' && e.code >= 400 && e.code <= 599)
+      return res.status(e.code).json({ ok: false, msg: e.msg });
+    console.error('bulk transfer error', e);
+    res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
 module.exports = router;
