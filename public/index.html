@@ -437,6 +437,7 @@ async function viewSale(){
         <div class="row">
           <div class="field"><label>Customer Type</label><select id="sCustType"><option>New Vehicle</option><option>Service Customer</option></select></div>
           <div class="field"><label>Customer Name</label><input id="sCust" placeholder="customer name"></div>
+          <div class="field" id="chassisField"><label>Chassis No</label><input id="sChassis" placeholder="vehicle chassis number"></div>
           <div class="field" id="vehNoField" style="display:none"><label>Vehicle No</label><input id="sVehNo" placeholder="e.g. TN-33-AB-1234"></div>
         </div>
         <div id="custWarn" style="margin:-4px 0 8px"></div>
@@ -482,8 +483,9 @@ async function viewSale(){
   // Customer type → show Vehicle No only for "Service Customer".
   $('#sCustType').onchange = ()=>{
     const svc = $('#sCustType').value==='Service Customer';
-    $('#vehNoField').style.display = svc ? '' : 'none';
-    if(!svc) $('#sVehNo').value='';
+    $('#vehNoField').style.display = svc ? '' : 'none';      // Service Customer → Vehicle No
+    $('#chassisField').style.display = svc ? 'none' : '';     // New Vehicle → Chassis No
+    if(svc) $('#sChassis').value=''; else $('#sVehNo').value='';
     updateInvoicePreview(); checkDupCustomer();
   };
   renderSaleItems();
@@ -538,6 +540,7 @@ async function submitSale(btn){
   const body = { saleDate:$('#sDate').value, branch:curBranch(),
     customerName:$('#sCust').value.trim()||undefined,
     vehicleNo: isService ? ($('#sVehNo').value.trim()||undefined) : undefined,
+    chassisNo: isService ? undefined : ($('#sChassis').value.trim()||undefined),
     remarks:$('#sRem').value||undefined,
     items:_saleItems.map(it=>({ partName:it.partName, partNo:it.partNo, qty:it.qty, unitPrice:it.unitPrice })) };
   btn.disabled=true;
@@ -555,7 +558,7 @@ async function submitSale(btn){
 function invoiceObjFromRows(invoiceNo, rows){
   const f = rows[0] || {};
   return { invoice_no:invoiceNo, sale_date:f.sale_date, branch:f.branch, vehicle:f.vehicle,
-    customer_name:f.customer_name, vehicle_no:f.vehicle_no, staff_email:f.staff_email,
+    customer_name:f.customer_name, vehicle_no:f.vehicle_no, chassis_no:f.chassis_no, staff_email:f.staff_email,
     items: rows.map(r=>({ part_name:r.part_name, part_no:r.part_no, qty:r.qty, unit_price:r.unit_price, sale_value:r.sale_value })),
     sale_value: rows.reduce((t,r)=>t+Number(r.sale_value||0),0) };
 }
@@ -577,6 +580,7 @@ function saleDraftFromForm(){
   return {
     invoice_no: $('#sInv') ? ($('#sInv').value||'') : '', sale_date: $('#sDate').value, branch: curBranch(),
     customer_name: $('#sCust').value.trim(), vehicle_no: isService ? $('#sVehNo').value.trim() : '',
+    chassis_no: isService ? '' : ($('#sChassis')?$('#sChassis').value.trim():''),
     vehicle: items.length?_saleItems[0].vehicle:'', items,
     sale_value: items.reduce((t,i)=>t+Number(i.sale_value||0),0), staff_email: USER.email,
   };
@@ -610,7 +614,7 @@ function invoiceHTML(s, draft){
     <div style="text-align:center;font-weight:700;margin-bottom:6px">INVOICE</div>
     <div style="display:flex;justify-content:space-between"><span>Inv: <b>${esc(s.invoice_no||'—')}</b></span><span>${fmtDate(s.sale_date)||'—'}</span></div>
     <div>Customer: ${esc(s.customer_name||'—')}</div>
-    <div style="display:flex;justify-content:space-between"><span>Vehicle No: ${esc(s.vehicle_no||'—')}</span><span>${esc(s.vehicle||'—')}</span></div>
+    <div style="display:flex;justify-content:space-between"><span>${s.chassis_no?('Chassis No: '+esc(s.chassis_no)):('Vehicle No: '+esc(s.vehicle_no||'—'))}</span><span>${esc(s.vehicle||'—')}</span></div>
     <table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:12px">
       <thead><tr style="background:#2563eb;color:#fff"><th style="text-align:left;padding:4px 6px">Item</th><th style="padding:4px 6px">Qty</th><th style="padding:4px 6px;text-align:right">Rate</th><th style="padding:4px 6px;text-align:right">Amount</th></tr></thead>
       <tbody>${items.map(it=>`<tr><td style="padding:4px 6px">${esc(it.part_name||'—')}${it.part_no&&it.part_no!=='—'?'<br><span style="color:#94a3b8">'+esc(it.part_no)+'</span>':''}</td><td style="text-align:center">${it.qty||0}</td><td style="text-align:right">${rs(it.unit_price)}</td><td style="text-align:right">${rs(it.sale_value)}</td></tr>`).join('')}</tbody>
@@ -1330,7 +1334,7 @@ function generateInvoicePDF(s){
   doc.text('Invoice No: '+(s.invoice_no||'-'), L, y);
   doc.text('Date: '+fmtDate(s.sale_date), R, y, {align:'right'}); y+=14;
   doc.text('Customer: '+(s.customer_name||'-'), L, y); y+=13;
-  doc.text('Vehicle No: '+(s.vehicle_no||'-'), L, y);
+  doc.text((s.chassis_no?('Chassis No: '+s.chassis_no):('Vehicle No: '+(s.vehicle_no||'-'))), L, y);
   doc.text('Model: '+(s.vehicle||'-'), R, y, {align:'right'}); y+=18;
   // ── line item ──
   doc.setFillColor(37,99,235); doc.rect(L,y-11,R-L,16,'F');

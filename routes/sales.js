@@ -88,7 +88,7 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (r
         qty, unit_price: unitPrice, sale_value: unitPrice * qty,
         cost_price: costPrice, gross_profit: (unitPrice - costPrice) * qty,
         stock_before: before, stock_after: before - qty, remarks: b.remarks || '',
-        customer_name: b.customerName || '', vehicle_no: b.vehicleNo || '',
+        customer_name: b.customerName || '', vehicle_no: b.vehicleNo || '', chassis_no: b.chassisNo || '',
       });
       return saved;
     });
@@ -151,7 +151,7 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), asyn
           qty, unit_price: unitPrice, sale_value: unitPrice * qty,
           cost_price: costPrice, gross_profit: (unitPrice - costPrice) * qty,
           stock_before: before, stock_after: before - qty, remarks: it.remarks || b.remarks || '',
-          customer_name: b.customerName || '', vehicle_no: b.vehicleNo || '',
+          customer_name: b.customerName || '', vehicle_no: b.vehicleNo || '', chassis_no: b.chassisNo || '',
         });
         rows.push(saved);
       }
