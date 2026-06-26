@@ -25,16 +25,22 @@ function groupBy(rows, keyFn, { txns = false } = {}) {
   });
 }
 
-// GET /api/analytics?branch=&from=&to= → breakdowns by part, vehicle, branch, source, month, staff
+// GET /api/analytics?branch=&from=&to= → breakdowns by part, vehicle, branch, category, brand, source, month, staff
 router.get('/', (req, res) => {
   try {
     let branch = req.query.branch;
     if (req.user.role !== 'Admin' && req.user.branch && req.user.branch !== 'ALL') branch = req.user.branch;
+    const mine = req.user.role === 'Sales_Staff';      // personal-sales scope
     const { from, to, vehicle } = req.query;
 
-    const sourceByPart = new Map(store.all('stock').map(s => [s.part_name, s.source]));
+    const pk = (name, no) => store.partKey(name, no);
+    const stockBy = new Map(store.all('stock').map(s => [pk(s.part_name, s.part_no),
+      { source: s.source, category: (s.category || '').trim() || 'Untagged', brand: (s.brand || '').trim() || 'Untagged' }]));
+    const tag = (s, field) => (stockBy.get(pk(s.part_name, s.part_no)) || {})[field];
+
     const rows = store.all('sales').filter(s =>
       (!branch || branch === 'ALL' || s.branch === branch) &&
+      (!mine || s.staff_email === req.user.email) &&
       (!vehicle || vehicle === 'ALL' || s.vehicle === vehicle) &&
       inRange(s.sale_date, from, to));
 
@@ -44,7 +50,11 @@ router.get('/', (req, res) => {
       .map(([vehicle, e]) => ({ vehicle, ...e })).sort((a, b) => b.sales - a.sales);
     const byBranch = groupBy(rows, s => s.branch, { txns: true })
       .map(([branch, e]) => ({ branch, ...e })).sort((a, b) => b.sales - a.sales);
-    const bySource = groupBy(rows, s => sourceByPart.get(s.part_name) || 'Unknown')
+    const byCategory = groupBy(rows, s => tag(s, 'category') || 'Untagged')
+      .map(([category, e]) => ({ category, qty: e.qty, sales: e.sales, profit: e.profit })).sort((a, b) => b.sales - a.sales);
+    const byBrand = groupBy(rows, s => tag(s, 'brand') || 'Untagged')
+      .map(([brand, e]) => ({ brand, qty: e.qty, sales: e.sales, profit: e.profit })).sort((a, b) => b.sales - a.sales);
+    const bySource = groupBy(rows, s => tag(s, 'source') || 'Unknown')
       .map(([source, e]) => ({ source, qty: e.qty, sales: e.sales })).sort((a, b) => b.sales - a.sales);
     const byMonth = groupBy(rows, s => String(s.sale_date).slice(0, 7))
       .map(([month, e]) => ({ month, sales: e.sales, profit: e.profit, qty: e.qty })).sort((a, b) => a.month.localeCompare(b.month));
@@ -58,7 +68,7 @@ router.get('/', (req, res) => {
       txns: rows.length,
     };
 
-    res.json({ ok: true, data: { totals, byPart, byVehicle, byBranch, bySource, byMonth, staff } });
+    res.json({ ok: true, data: { totals, byPart, byVehicle, byBranch, byCategory, byBrand, bySource, byMonth, staff } });
   } catch (e) {
     console.error('analytics error', e); res.status(500).json({ ok: false, msg: 'Server error' });
   }

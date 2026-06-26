@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Dharani Accessories Management System</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-treemap@2.3.0/dist/chartjs-chart-treemap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -132,7 +134,57 @@
     .modal{min-width:auto;width:calc(100vw - 28px)}
     th,td{padding:8px 9px}
     .filters .field{min-width:130px}
+    .chartGrid{grid-template-columns:1fr!important}
   }
+
+  /* KPI color status (overrides the default top accent) */
+  .kpi.green::before{background:linear-gradient(90deg,#16a34a,#4ade80)}
+  .kpi.amber::before{background:linear-gradient(90deg,#d97706,#fbbf24)}
+  .kpi.red::before{background:linear-gradient(90deg,#dc2626,#f87171)}
+  .kpi.green .v{color:#15803d} .kpi.amber .v{color:#b45309} .kpi.red .v{color:#b91c1c}
+  .kpi .ico{position:absolute;top:14px;right:16px;font-size:18px;opacity:.5}
+  .kpis.secondary{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:22px}
+  .kpis.secondary .kpi{padding:12px 16px;cursor:default} .kpis.secondary .kpi .v{font-size:18px}
+  .kpis.secondary .kpi::before{display:none}
+
+  /* Charts grid */
+  .chartGrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+  .chartGrid .panel{margin-bottom:0}
+  .panel.span2{grid-column:1 / -1}
+  .chartHead{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .chartHead h3{margin:0}
+  .toggle{display:inline-flex;gap:4px}
+  .toggle button{padding:4px 10px;font-size:11px;border-radius:8px;background:var(--glass);color:#475569;border:1px solid var(--glass-border);box-shadow:none}
+  .toggle button.active{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border-color:transparent}
+  .chartWrap{position:relative;height:240px} .chartWrap.tall{height:300px}
+
+  /* Live alerts strip */
+  .alerts{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .alert{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:14px;cursor:pointer;font-size:13px;font-weight:600;
+    border:1px solid var(--glass-border);background:var(--panel);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);box-shadow:var(--shadow);transition:.15s}
+  .alert:hover{transform:translateY(-2px)}
+  .alert .n{font-size:18px;font-weight:800}
+  .alert.red{border-left:4px solid var(--red)} .alert.red .n{color:var(--red)}
+  .alert.amber{border-left:4px solid var(--amber)} .alert.amber .n{color:var(--amber)}
+  .alert.blue{border-left:4px solid var(--brand)} .alert.blue .n{color:var(--brand)}
+  .alert.green{border-left:4px solid var(--green)} .alert.green .n{color:var(--green)}
+
+  /* Quick actions */
+  .quick{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+  .quick button{background:var(--glass-strong);color:#1d4ed8;border:1px solid var(--glass-border);box-shadow:var(--shadow);font-weight:600}
+  .quick button:hover{background:#fff}
+
+  /* Export dropdown (native details/summary) */
+  .exp{position:relative;display:inline-block}
+  .exp>summary{list-style:none;display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;font-size:12px;font-weight:600;border-radius:10px;
+    background:var(--glass);color:#1f2937;border:1px solid var(--glass-border)}
+  .exp>summary::-webkit-details-marker{display:none}
+  .exp[open]>summary{background:rgba(255,255,255,.9)}
+  .exp-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:30;min-width:140px;padding:6px;border-radius:12px;
+    background:var(--glass-strong);border:1px solid var(--glass-border);box-shadow:var(--shadow-lg);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+  .exp-menu button{display:block;width:100%;text-align:left;background:transparent;color:#1f2937;box-shadow:none;padding:8px 10px;border-radius:8px;font-weight:500}
+  .exp-menu button:hover{background:rgba(37,99,235,.1);transform:none;box-shadow:none}
+  .barRow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -180,7 +232,7 @@
 /* ════════════════════ Core ════════════════════ */
 const API = '/api';
 const COMPANY = 'Bhavani Dharani TVS';   // fallback name on PDF invoices
-let CONFIG = { company: COMPANY, currency: 'INR', gstRate: 0, gstMode: 'exclusive', gstEnabled: true, gstin: '' };
+let CONFIG = { company: COMPANY, currency: 'INR', gstRate: 0, gstMode: 'exclusive', gstEnabled: true, gstin: '', categories: [], brands: [], suppliers: [] };
 let TOKEN = localStorage.getItem('dams_token') || '';
 let USER = null;
 try { USER = JSON.parse(localStorage.getItem('dams_user') || 'null'); } catch {}
@@ -202,6 +254,9 @@ if (window.Chart) {
   tt.titleFont = { weight: '600', size: 12 }; tt.bodyFont = { size: 12 };
   tt.boxPadding = 6; tt.usePointStyle = true;
   Chart.defaults.animation = { duration: 700, easing: 'easeOutQuart' };
+  // Charts live in fixed-height .chartWrap containers — fill them.
+  Chart.defaults.responsive = true;
+  Chart.defaults.maintainAspectRatio = false;
 }
 
 function apiCall(method, path, body){
@@ -313,103 +368,363 @@ const curBranch = () => { const s=$('#fBranch'); return s ? s.value : USER.branc
 /* ════════════════════ Dashboard ════════════════════ */
 let charts = {};
 function destroyCharts(){ Object.values(charts).forEach(c=>c&&c.destroy()); charts={}; }
+const fmtNum = v => Number(v||0).toLocaleString('en-IN');
+const PALETTE=['#2563eb','#16a34a','#f59e0b','#ef4444','#7c3aed','#06b6d4','#ec4899','#0ea5e9','#84cc16','#f97316'];
+let _dash=null, _gran='day', _topMetric='value';
 
+// The 8 headline KPI cards. st() → '' (neutral) | green | amber | red.
 const KPI_DEFS = [
-  ['today_sales','Today\'s Sales',v=>fmtINR(v)],
-  ['monthly_sales','This Month',v=>fmtINR(v)],
-  ['total_sales','Sales (range)',v=>fmtINR(v)],
-  ['gross_profit','Gross Profit',v=>fmtINR(v)],
-  ['stock_value','Stock Value',v=>fmtINR(v)],
-  ['qty_sold','Qty Sold',v=>v],
-  ['transactions','Transactions',v=>v],
-  ['low_stock','Low Stock',v=>v],
-  ['dead_stock','Dead Stock',v=>v],
+  {k:'total_stock_items', l:'Total Stock Items', ico:'📦', f:fmtNum,  st:()=>''},
+  {k:'inventory_value',   l:'Inventory Value',   ico:'💰', f:fmtINR,  st:()=>''},
+  {k:'today_sales',       l:"Today's Sales",     ico:'🛒', f:fmtINR,  st:v=>v>0?'green':'amber'},
+  {k:'monthly_sales',     l:'Monthly Sales',     ico:'📈', f:fmtINR,  st:()=>''},
+  {k:'total_invoices',    l:'Total Invoices',    ico:'🧾', f:fmtNum,  st:()=>''},
+  {k:'low_stock',         l:'Low Stock Items',   ico:'⚠️', f:fmtNum,  st:v=>v>0?'amber':'green'},
+  {k:'out_of_stock',      l:'Out of Stock',      ico:'❌', f:fmtNum,  st:v=>v>0?'red':'green'},
+  {k:'active_branches',   l:'Active Branches',   ico:'🏢', f:fmtNum,  st:()=>'green'},
 ];
+const SECONDARY_KPIS=[['total_sales','Sales (range)',fmtINR],['gross_profit','Gross Profit',fmtINR],['qty_sold','Qty Sold',fmtNum],['dead_stock','Dead Stock',fmtNum]];
+
+// Chart panels. role 'all' = everyone; 'multi' = hidden for Sales_Staff (personal view).
+const CHART_PANELS=[
+  {id:'cTrend', title:'Sales Trend', role:'all', head:()=>granToggle()},
+  {id:'cBranch', title:'Branch-wise Sales', role:'multi'},
+  {id:'cSVP', title:'Monthly Sales vs Purchase', role:'all'},
+  {id:'cCat', title:'Sales by Category', role:'all'},
+  {id:'cTop', title:'Top 10 Selling', role:'all', head:()=>topToggle()},
+  {id:'cBrand', title:'Sales by Brand', role:'all'},
+  {id:'cStockBranch', title:'Stock by Branch', role:'multi'},
+  {id:'cInvVal', title:'Inventory Value by Branch', role:'multi'},
+  {id:'cAging', title:'Stock Aging', role:'all'},
+  {id:'cProfit', title:'Monthly Profit Trend', role:'all'},
+  {id:'cPerf', title:'Branch Performance', role:'multi'},
+  {id:'cStaff', title:'Sales Executive Performance', role:'multi'},
+];
+
+// ── Filters → query string ──────────────────────────────────────────────────
+function dashFilters(){
+  return { branch:curBranch()||'ALL', from:$('#fFrom')?.value||'', to:$('#fTo')?.value||'',
+    category:$('#fCat')?.value||'ALL', brand:$('#fBrand')?.value||'ALL', supplier:$('#fSupp')?.value||'ALL' };
+}
+function dashQS(extra={}){
+  const f={...dashFilters()};
+  for(const [k,v] of Object.entries(extra)) if(v!=null && v!=='') f[k]=v;
+  return '?'+Object.entries(f).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
+}
+function setDatePreset(p){
+  const now=new Date(), iso=d=>d.toISOString().slice(0,10); let from, to=iso(now);
+  if(p==='today') from=to;
+  else if(p==='week'){ const d=new Date(now); d.setDate(d.getDate()-((d.getDay()+6)%7)); from=iso(d); }
+  else if(p==='month') from=iso(new Date(now.getFullYear(),now.getMonth(),1));
+  else if(p==='year') from=iso(new Date(now.getFullYear(),0,1));
+  $('#fFrom').value=from; $('#fTo').value=to; loadDashboard();
+}
+function setGran(g,btn){ _gran=g; document.querySelectorAll('#granTog button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); loadDashboard(); }
+function setTopMetric(m,btn){ _topMetric=m; document.querySelectorAll('#topTog button').forEach(b=>b.classList.remove('active')); if(btn)btn.classList.add('active'); if(_dash) renderTopChart(); }
+const granToggle=()=>`<span class="toggle" id="granTog">${[['day','Day'],['week','Week'],['month','Month'],['year','Year']].map(([g,l])=>`<button class="${g===_gran?'active':''}" onclick="setGran('${g}',this)">${l}</button>`).join('')}</span>`;
+const topToggle=()=>`<span class="toggle" id="topTog">${[['value','₹ Value'],['qty','Qty']].map(([m,l])=>`<button class="${m===_topMetric?'active':''}" onclick="setTopMetric('${m}',this)">${l}</button>`).join('')}</span>`;
+
+const isStaff=()=>USER.role==='Sales_Staff';
+function optionList(arr,first){ return [`<option value="ALL">${first}</option>`].concat((arr||[]).map(x=>`<option value="${esc(x)}">${esc(x)}</option>`)).join(''); }
+
 async function viewDashboard(){
   destroyCharts();
-  const m = $('#main');
-  m.innerHTML = `
-    <h1>Dashboard</h1><p class="sub">Key metrics. Click any card to drill in.</p>
+  const staff=isStaff();
+  const quick=[];
+  if(can('sales')) quick.push(`<button onclick="go('sales')">🛒 Add Sale</button>`);
+  if(can('inward')) quick.push(`<button onclick="go('inward')">▼ Add Purchase</button>`);
+  if(can('bulk')) quick.push(`<button onclick="go('bulk')">⇪ Bulk Purchase</button>`);
+  if(can('transfer')) quick.push(`<button onclick="go('transfer')">⇄ Transfer Stock</button>`);
+
+  const panels=CHART_PANELS.filter(p=>p.role==='all'||!staff).map(p=>`
+    <div class="panel">
+      <div class="chartHead"><h3>${p.title}</h3>${p.head?p.head():''}</div>
+      <div class="chartWrap"><canvas id="${p.id}"></canvas></div>
+    </div>`).join('');
+
+  $('#main').innerHTML = `
+    <div class="barRow">
+      <div><h1>${staff?'My Performance':'Dashboard'}</h1>
+        <p class="sub">${staff?'Your personal sales.':'Key metrics. Click any card or chart to drill in.'}</p></div>
+      ${expMenu('exportDashSummary')}
+    </div>
     <div class="filters">
       <div class="field"><label>Branch</label>${branchPicker(true)}</div>
       <div class="field"><label>From</label><input id="fFrom" type="date"></div>
       <div class="field"><label>To</label><input id="fTo" type="date"></div>
+      <div class="field"><label>Category</label><select id="fCat">${optionList(CONFIG.categories,'All categories')}</select></div>
+      <div class="field"><label>Brand</label><select id="fBrand">${optionList(CONFIG.brands,'All brands')}</select></div>
+      <div class="field"><label>Supplier</label><select id="fSupp">${optionList(CONFIG.suppliers,'All suppliers')}</select></div>
       <button onclick="loadDashboard()">Apply</button>
+      <span class="toggle">${[['today','Today'],['week','Week'],['month','Month'],['year','Year']].map(([p,l])=>`<button onclick="setDatePreset('${p}')">${l}</button>`).join('')}</span>
     </div>
+    <div id="alerts" class="alerts"></div>
+    ${quick.length?`<div class="quick">${quick.join('')}</div>`:''}
     <div id="kpis" class="kpis"></div>
-    <div class="panels">
-      <div class="panel"><h3>Sales Trend (14 days)</h3><canvas id="cTrend" height="140"></canvas></div>
-      <div class="panel"><h3>Sales by Branch</h3><canvas id="cBranch" height="140"></canvas></div>
-    </div>
-    <div class="panel"><h3>Top Parts</h3><canvas id="cParts" height="90"></canvas></div>
-    <div class="panel"><h3>Recent Sales</h3><div id="recent"></div></div>`;
-  // default range = current month
+    <div id="kpis2" class="kpis secondary"></div>
+    <div class="chartGrid">${panels}</div>
+    <div class="panel"><div class="chartHead"><h3>Recent Sales</h3></div><div id="recent"></div></div>`;
+
   const now=new Date(); const first=new Date(now.getFullYear(),now.getMonth(),1);
   $('#fFrom').value = first.toISOString().slice(0,10);
   $('#fTo').value = now.toISOString().slice(0,10);
   loadDashboard();
 }
-async function loadDashboard(){
-  const qs = `?branch=${encodeURIComponent(curBranch()||'ALL')}&from=${$('#fFrom').value}&to=${$('#fTo').value}`;
-  const r = await apiCall('GET','/dashboard'+qs);
-  if(!r.ok) return toast(r.msg||'Failed to load','err');
-  const { kpis, charts:ch, recent } = r.data;
 
-  $('#kpis').innerHTML = KPI_DEFS.map(([k,l,f])=>`
-    <div class="kpi" onclick="drill('${k}','${esc(l)}')">
-      <div class="l">${l}</div><div class="v">${f(kpis[k])}</div>
-    </div>`).join('');
+async function loadDashboard(){
+  const r = await apiCall('GET','/dashboard'+dashQS({gran:_gran}));
+  if(!r.ok) return toast(r.msg||'Failed to load','err');
+  _dash=r.data;
+  const { kpis, charts:ch, alerts, recent } = r.data;
+
+  // KPI cards (8) with color status
+  $('#kpis').innerHTML = KPI_DEFS.map(d=>{
+    const cls=d.st(kpis[d.k],kpis)||'';
+    return `<div class="kpi ${cls}" onclick="drill('${d.k}','${esc(d.l)}')">
+      <span class="ico">${d.ico}</span><div class="l">${d.l}</div><div class="v">${d.f(kpis[d.k])}</div></div>`;
+  }).join('');
+  $('#kpis2').innerHTML = SECONDARY_KPIS.map(([k,l,f])=>`
+    <div class="kpi" onclick="drill('${k}','${esc(l)}')"><div class="l">${l}</div><div class="v">${f(kpis[k])}</div></div>`).join('');
+
+  if($('#alerts')) $('#alerts').innerHTML = renderAlerts(alerts);
 
   destroyCharts();
   const grid={color:'rgba(15,23,42,.06)'}, tick={color:'#94a3b8'};
-  const PALETTE=['#2563eb','#16a34a','#f59e0b','#ef4444','#7c3aed','#06b6d4','#ec4899'];
-  // Sales trend — gradient area line
-  const tctx=$('#cTrend').getContext('2d');
-  const tgrad=tctx.createLinearGradient(0,0,0,180);
-  tgrad.addColorStop(0,'rgba(37,99,235,.32)'); tgrad.addColorStop(1,'rgba(37,99,235,0)');
-  charts.trend = new Chart($('#cTrend'),{type:'line',
-    data:{labels:ch.trend.map(d=>fmtDate(d.date)),datasets:[{data:ch.trend.map(d=>d.value),
-      borderColor:'#2563eb',backgroundColor:tgrad,fill:true,tension:.4,borderWidth:2.5,
-      pointRadius:0,pointHoverRadius:5,pointHoverBackgroundColor:'#2563eb',pointHoverBorderColor:'#fff',pointHoverBorderWidth:2}]},
-    options:{plugins:{legend:{display:false}},interaction:{mode:'index',intersect:false},
-      scales:{x:{grid:{display:false},ticks:tick,border:{display:false}},y:{grid,ticks:tick,border:{display:false},beginAtZero:true}}}});
-  // Sales by branch — rounded doughnut
-  charts.branch = new Chart($('#cBranch'),{type:'doughnut',
-    data:{labels:ch.byBranch.map(b=>b.branch),datasets:[{data:ch.byBranch.map(b=>b.value),
-      backgroundColor:PALETTE,borderColor:'rgba(255,255,255,.85)',borderWidth:2,borderRadius:6,hoverOffset:8,spacing:2}]},
-    options:{cutout:'66%',plugins:{legend:{position:'right',labels:{color:'#475569'}}}}});
-  // Top parts — rounded gradient bars
-  const pctx=$('#cParts').getContext('2d');
-  const pgrad=pctx.createLinearGradient(0,0,0,260);
-  pgrad.addColorStop(0,'#3b82f6'); pgrad.addColorStop(1,'#2563eb');
-  charts.parts = new Chart($('#cParts'),{type:'bar',
-    data:{labels:ch.topParts.map(p=>p.part),datasets:[{data:ch.topParts.map(p=>p.value),
-      backgroundColor:pgrad,borderRadius:8,borderSkipped:false,maxBarThickness:46}]},
-    options:{plugins:{legend:{display:false}},
-      scales:{x:{grid:{display:false},ticks:tick,border:{display:false}},y:{grid,ticks:tick,border:{display:false},beginAtZero:true}}}});
+  const noLeg={plugins:{legend:{display:false}}};
+  const xy=axis=>({scales:{x:{grid:axis==='y'?grid:{display:false},ticks:tick,border:{display:false},beginAtZero:true},
+    y:{grid:axis==='y'?{display:false}:grid,ticks:tick,border:{display:false},beginAtZero:true}}});
+
+  // 1. Sales trend — gradient area line
+  if($('#cTrend')){
+    const ctx=$('#cTrend').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,240);
+    g.addColorStop(0,'rgba(37,99,235,.32)'); g.addColorStop(1,'rgba(37,99,235,0)');
+    const labels=ch.trend.map(d=>_gran==='day'?fmtDate(d.label):d.label);
+    charts.trend=new Chart($('#cTrend'),{type:'line',
+      data:{labels,datasets:[{data:ch.trend.map(d=>d.value),borderColor:'#2563eb',backgroundColor:g,fill:true,tension:.4,borderWidth:2.5,pointRadius:0,pointHoverRadius:5}]},
+      options:{...noLeg,interaction:{mode:'index',intersect:false},...xy('x'),
+        onClick:(e,els)=>{ if(els.length) trendDrill(ch.trend[els[0].index].label); }}});
+  }
+  // 2. Branch-wise sales — horizontal bar → branch drill
+  if($('#cBranch')) charts.branch=new Chart($('#cBranch'),{type:'bar',
+    data:{labels:ch.byBranch.map(b=>b.branch),datasets:[{data:ch.byBranch.map(b=>b.value),backgroundColor:PALETTE,borderRadius:8,maxBarThickness:34}]},
+    options:{indexAxis:'y',...noLeg,...xy('y'),onClick:(e,els)=>{ if(els.length) branchDrill(ch.byBranch[els[0].index].branch); }}});
+  // 3. Monthly sales vs purchase — grouped bar → month drill
+  if($('#cSVP')) charts.svp=new Chart($('#cSVP'),{type:'bar',
+    data:{labels:ch.salesVsPurchase.map(m=>m.month),datasets:[
+      {label:'Sales',data:ch.salesVsPurchase.map(m=>m.sales),backgroundColor:'#2563eb',borderRadius:6},
+      {label:'Purchase',data:ch.salesVsPurchase.map(m=>m.purchase),backgroundColor:'#f59e0b',borderRadius:6},
+      {label:'Profit',data:ch.salesVsPurchase.map(m=>m.profit),backgroundColor:'#16a34a',borderRadius:6}]},
+    options:{plugins:{legend:{position:'top',labels:{color:'#475569'}}},...xy('x'),
+      onClick:(e,els)=>{ if(els.length) chartDrill('month',ch.salesVsPurchase[els[0].index].month,'Sales · '+ch.salesVsPurchase[els[0].index].month); }}});
+  // 4. Sales by category — doughnut → category drill
+  if($('#cCat')) charts.cat=new Chart($('#cCat'),{type:'doughnut',
+    data:{labels:ch.byCategory.map(c=>c.category),datasets:[{data:ch.byCategory.map(c=>c.value),backgroundColor:PALETTE,borderColor:'#fff',borderWidth:2,hoverOffset:8}]},
+    options:{cutout:'62%',plugins:{legend:{position:'right',labels:{color:'#475569'}}},
+      onClick:(e,els)=>{ if(els.length) chartDrill('category',ch.byCategory[els[0].index].category,'Category · '+ch.byCategory[els[0].index].category); }}});
+  // 5. Top 10 selling — horizontal bar (Qty/Value toggle) → part drill
+  renderTopChart();
+  // 6. Sales by brand — doughnut → brand drill
+  if($('#cBrand')) charts.brand=new Chart($('#cBrand'),{type:'doughnut',
+    data:{labels:ch.byBrand.map(b=>b.brand),datasets:[{data:ch.byBrand.map(b=>b.value),backgroundColor:PALETTE,borderColor:'#fff',borderWidth:2,hoverOffset:8}]},
+    options:{cutout:'62%',plugins:{legend:{position:'right',labels:{color:'#475569'}}},
+      onClick:(e,els)=>{ if(els.length) chartDrill('brand',ch.byBrand[els[0].index].brand,'Brand · '+ch.byBrand[els[0].index].brand); }}});
+  // 7. Stock by branch — stacked bar → branch drill
+  if($('#cStockBranch')){
+    const sb=ch.stockByBranch;
+    charts.stockBranch=new Chart($('#cStockBranch'),{type:'bar',
+      data:{labels:sb.labels,datasets:sb.series.map((s,i)=>({label:s.name,data:s.data,backgroundColor:PALETTE[i%PALETTE.length],borderRadius:4}))},
+      options:{plugins:{legend:{position:'top',labels:{color:'#475569',boxWidth:12}}},
+        scales:{x:{stacked:true,grid:{display:false},ticks:tick,border:{display:false}},y:{stacked:true,grid,ticks:tick,border:{display:false},beginAtZero:true}},
+        onClick:(e,els)=>{ if(els.length) branchDrill(sb.labels[els[0].index]); }}});
+  }
+  // 8. Inventory value by branch — treemap (fallback bar) → branch drill
+  if($('#cInvVal')) renderInvValue(ch.inventoryValueByBranch);
+  // 9. Stock aging — bar → aging drill
+  if($('#cAging')) charts.aging=new Chart($('#cAging'),{type:'bar',
+    data:{labels:ch.stockAging.map(a=>a.bucket),datasets:[{data:ch.stockAging.map(a=>a.value),backgroundColor:['#16a34a','#84cc16','#f59e0b','#ef4444'],borderRadius:8,maxBarThickness:60}]},
+    options:{...noLeg,...xy('x'),onClick:(e,els)=>{ if(els.length) chartDrill('aging',ch.stockAging[els[0].index].bucket,'Stock Aging · '+ch.stockAging[els[0].index].bucket); }}});
+  // 10. Monthly profit trend — line → month drill
+  if($('#cProfit')){
+    const ctx=$('#cProfit').getContext('2d'); const g=ctx.createLinearGradient(0,0,0,240);
+    g.addColorStop(0,'rgba(22,163,74,.30)'); g.addColorStop(1,'rgba(22,163,74,0)');
+    charts.profit=new Chart($('#cProfit'),{type:'line',
+      data:{labels:ch.profitTrend.map(m=>m.month),datasets:[{data:ch.profitTrend.map(m=>m.profit),borderColor:'#16a34a',backgroundColor:g,fill:true,tension:.4,borderWidth:2.5,pointRadius:0,pointHoverRadius:5}]},
+      options:{...noLeg,...xy('x'),onClick:(e,els)=>{ if(els.length) chartDrill('month',ch.profitTrend[els[0].index].month,'Profit · '+ch.profitTrend[els[0].index].month); }}});
+  }
+  // 11. Branch performance — radar → perf table
+  if($('#cPerf')){
+    const bp=ch.branchPerformance;
+    charts.perf=new Chart($('#cPerf'),{type:'radar',
+      data:{labels:bp.axes,datasets:bp.series.map((s,i)=>({label:s.branch,data:s.values,
+        borderColor:PALETTE[i%PALETTE.length],backgroundColor:PALETTE[i%PALETTE.length]+'33',borderWidth:2,pointRadius:2}))},
+      options:{plugins:{legend:{position:'top',labels:{color:'#475569',boxWidth:12}}},
+        scales:{r:{suggestedMin:0,suggestedMax:100,ticks:{display:false},grid:{color:'rgba(15,23,42,.08)'}}},
+        onClick:()=>openTableModal('Branch Performance', bp.series.map(s=>s.raw))}});
+  }
+  // 12. Sales executive performance — horizontal bar → staff drill
+  if($('#cStaff')) charts.staff=new Chart($('#cStaff'),{type:'bar',
+    data:{labels:ch.staffPerformance.map(s=>s.staff),datasets:[{data:ch.staffPerformance.map(s=>s.sales),backgroundColor:'#7c3aed',borderRadius:6,maxBarThickness:30}]},
+    options:{indexAxis:'y',...noLeg,...xy('y'),onClick:(e,els)=>{ if(els.length) chartDrill('staff',ch.staffPerformance[els[0].index].staff,'Staff · '+ch.staffPerformance[els[0].index].staff); }}});
 
   $('#recent').innerHTML = recent.length ? tableHTML(
     ['Date','Branch','Part','Qty','Value','Invoice'],
-    recent.map(s=>[fmtDate(s.sale_date),s.branch,s.part_name,s.qty,fmtINR(s.sale_value),s.invoice_no||'—']))
+    recent.map(s=>[fmtDate(s.sale_date),s.branch,esc(s.part_name),s.qty,fmtINR(s.sale_value),esc(s.invoice_no||'—')]))
     : '<p class="muted">No sales yet.</p>';
 }
-async function drill(type,label){
-  const qs = `?branch=${encodeURIComponent(curBranch()||'ALL')}&from=${$('#fFrom').value}&to=${$('#fTo').value}`;
-  const r = await apiCall('GET','/dashboard/drill/'+type+qs);
-  if(!r.ok) return toast(r.msg||'Failed','err');
-  const rows = r.data;
-  if(!rows.length) return modal(label, '<p class="muted">No records.</p>');
-  const cols = Object.keys(rows[0]);
-  modal(label+' · '+rows.length+' rows', `<div class="tableWrap">${tableHTML(
-    cols.map(prettyCol),
-    rows.map(row=>cols.map(c=>fmtCell(c,row[c]))))}</div>`);
+
+function renderTopChart(){
+  if(!$('#cTop')||!_dash) return;
+  if(charts.top) charts.top.destroy();
+  const grid={color:'rgba(15,23,42,.06)'}, tick={color:'#94a3b8'};
+  const tp=_dash.charts.topParts;
+  charts.top=new Chart($('#cTop'),{type:'bar',
+    data:{labels:tp.map(p=>p.part),datasets:[{data:tp.map(p=>_topMetric==='qty'?p.qty:p.value),backgroundColor:'#2563eb',borderRadius:6,maxBarThickness:26}]},
+    options:{indexAxis:'y',plugins:{legend:{display:false}},
+      scales:{x:{grid,ticks:tick,border:{display:false},beginAtZero:true},y:{grid:{display:false},ticks:tick,border:{display:false}}},
+      onClick:(e,els)=>{ if(els.length){ const p=tp[els[0].index]; chartDrill('top_part',p.part,'Part · '+p.part,{pno:p.pno}); } }}});
 }
+
+function renderInvValue(data){
+  if(!data.length){ return; }
+  let ok=false;
+  try{
+    if(Chart.registry.getController('treemap')){
+      charts.invVal=new Chart($('#cInvVal'),{type:'treemap',
+        data:{datasets:[{tree:data,key:'value',groups:['branch'],spacing:1,borderWidth:0,
+          backgroundColor:c=>c.type==='data'?PALETTE[c.dataIndex%PALETTE.length]:'transparent',
+          labels:{display:true,color:'#fff',font:{weight:'600'},formatter:c=>[c.raw._data.branch, fmtINR(c.raw.v)]}}]},
+        options:{plugins:{legend:{display:false}},onClick:(e,els)=>{ if(els.length) branchDrill(data[els[0].index].branch); }}});
+      ok=true;
+    }
+  }catch(e){ ok=false; }
+  if(!ok){ // fallback: horizontal bar
+    const grid={color:'rgba(15,23,42,.06)'}, tick={color:'#94a3b8'};
+    charts.invVal=new Chart($('#cInvVal'),{type:'bar',
+      data:{labels:data.map(d=>d.branch),datasets:[{data:data.map(d=>d.value),backgroundColor:PALETTE,borderRadius:8,maxBarThickness:34}]},
+      options:{indexAxis:'y',plugins:{legend:{display:false}},
+        scales:{x:{grid,ticks:tick,border:{display:false},beginAtZero:true},y:{grid:{display:false},ticks:tick,border:{display:false}}},
+        onClick:(e,els)=>{ if(els.length) branchDrill(data[els[0].index].branch); }}});
+  }
+}
+
+function renderAlerts(a){
+  if(!a) return '';
+  const items=[];
+  if(a.outOfStock.count) items.push(['red','❌',a.outOfStock.count,'Out of Stock','out_of_stock']);
+  if(a.lowStock.count)   items.push(['amber','⚠️',a.lowStock.count,'Low Stock','low_stock']);
+  if(a.deadStock.count)  items.push(['blue','🐢',a.deadStock.count,'Dead Stock','dead_stock']);
+  if(a.spikes.count)     items.push(['green','🚀',a.spikes.count,'Sales Spikes','__spikes']);
+  if(!items.length) return `<div class="alert green"><span>✅</span><span>All healthy — no active alerts</span></div>`;
+  return items.map(([cls,ic,nn,lbl,type])=> type==='__spikes'
+    ? `<div class="alert ${cls}" onclick="openTableModal('Sales Spikes', _dash.alerts.spikes.sample)"><span>${ic}</span><span class="n">${nn}</span><span>${lbl}</span></div>`
+    : `<div class="alert ${cls}" onclick="drill('${type}','${lbl}')"><span>${ic}</span><span class="n">${nn}</span><span>${lbl}</span></div>`
+  ).join('');
+}
+
+// ── Drill-downs ──────────────────────────────────────────────────────────────
+async function drill(type,label){ return chartDrill(type,null,label); }
+async function chartDrill(type,key,label,extra){
+  const r=await apiCall('GET','/dashboard/drill/'+type+dashQS({key, ...(extra||{})}));
+  openTableModal(label, r.ok? r.data: []);
+}
+function trendDrill(label){
+  let from=label,to=label;
+  if(_gran==='month'){ from=label+'-01'; const d=new Date(label+'-01T00:00:00'); d.setMonth(d.getMonth()+1); d.setDate(0); to=d.toISOString().slice(0,10); }
+  else if(_gran==='week'){ const d=new Date(label+'T00:00:00'); d.setDate(d.getDate()+6); to=d.toISOString().slice(0,10); }
+  else if(_gran==='year'){ from=label+'-01-01'; to=label+'-12-31'; }
+  apiCall('GET','/dashboard/drill/total_sales'+dashQS({from,to})).then(r=>openTableModal('Sales · '+label, r.ok?r.data:[]));
+}
+
+// Branch drill-down: Sales / Stock / Staff / Products tabs.
+let _bdBranch=null;
+function branchDrill(branch){
+  _bdBranch=branch;
+  modal('Branch · '+branch, `<div class="tabs" id="bdTabs">
+    <button class="active" onclick="bdTab('sales',this)">Sales</button>
+    <button onclick="bdTab('stock',this)">Stock</button>
+    <button onclick="bdTab('staff',this)">Staff</button>
+    <button onclick="bdTab('products',this)">Products</button></div>
+    <div id="bdBody"><p class="muted">Loading…</p></div>`);
+  bdTab('sales',$('#bdTabs').firstElementChild);
+}
+async function bdTab(key,btn){
+  document.querySelectorAll('#bdTabs button').forEach(b=>b.classList.remove('active')); if(btn) btn.classList.add('active');
+  const body=$('#bdBody'); body.innerHTML='<p class="muted">Loading…</p>';
+  const b=_bdBranch; let rows=[];
+  if(key==='sales'){ const r=await apiCall('GET','/dashboard/drill/branch_sales'+dashQS({branch:b,key:b})); rows=r.ok?r.data:[]; }
+  else if(key==='stock'){ const r=await apiCall('GET','/dashboard/drill/stock_branch'+dashQS({branch:b,key:b})); rows=r.ok?r.data:[]; }
+  else if(key==='staff'){ const r=await apiCall('GET','/analytics'+dashQS({branch:b})); rows=r.ok?r.data.staff:[]; }
+  else if(key==='products'){ const r=await apiCall('GET','/analytics'+dashQS({branch:b})); rows=r.ok?r.data.byPart:[]; }
+  body.innerHTML = rows.length ? tableModalHTML(rows) : '<p class="muted">No data.</p>';
+}
+
 const prettyCol = c => c.replace(/_/g,' ').replace(/\b\w/g,m=>m.toUpperCase());
 function fmtCell(col,val){
   if(val==null) return '—';
-  if(/value|price|profit|cost/.test(col)) return fmtINR(val);
+  if(/value|price|profit|cost|sales/.test(col)) return fmtINR(val);
   if(/date|last_sale/.test(col)) return fmtDate(val);
   return esc(val);
+}
+
+// ── Reusable table modal + Excel/PDF/CSV export ──────────────────────────────
+let _exports={}, _expSeq=0;
+function exportBar(headers, rows, baseName){
+  const id='x'+(++_expSeq); _exports[id]={headers,rows,baseName};
+  return expMenu('doExport',id);
+}
+function expMenu(fn,...args){
+  const a=args.map(x=>`'${String(x).replace(/'/g,"\\'")}'`).join(',');
+  const pre=a?a+',':'';
+  return `<details class="exp"><summary>⬇ Export</summary><div class="exp-menu">
+    <button onclick="${fn}(${pre}'xlsx')">Excel (.xlsx)</button>
+    <button onclick="${fn}(${pre}'pdf')">PDF (.pdf)</button>
+    <button onclick="${fn}(${pre}'csv')">CSV (.csv)</button></div></details>`;
+}
+function doExport(id,fmt){
+  const e=_exports[id]; if(!e) return;
+  runExport(fmt, e.baseName, e.headers, e.rows);
+  document.querySelectorAll('details.exp[open]').forEach(d=>d.open=false);
+}
+function runExport(fmt, baseName, headers, rows){
+  if(fmt==='xlsx') exportExcel(baseName,headers,rows);
+  else if(fmt==='pdf') exportPDF(baseName,headers,rows);
+  else exportCSV2(baseName,headers,rows);
+}
+const _stamp=()=>new Date().toISOString().slice(0,10);
+function exportExcel(baseName,headers,rows){
+  if(typeof XLSX==='undefined') return toast('Excel library not loaded','err');
+  const ws=XLSX.utils.aoa_to_sheet([headers,...rows.map(r=>r.map(c=>c==null?'':c))]);
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Data');
+  XLSX.writeFile(wb, baseName+'_'+_stamp()+'.xlsx');
+}
+function exportPDF(baseName,headers,rows){
+  if(!(window.jspdf&&window.jspdf.jsPDF)) return toast('PDF library not loaded','err');
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:headers.length>6?'landscape':'portrait',unit:'pt',format:'a4'});
+  doc.setFontSize(13); doc.text(baseName.replace(/_/g,' '),40,34);
+  if(typeof doc.autoTable!=='function') return toast('PDF table plugin not loaded','err');
+  doc.autoTable({head:[headers],body:rows.map(r=>r.map(c=>c==null?'':String(c))),startY:46,styles:{fontSize:8},headStyles:{fillColor:[37,99,235]}});
+  doc.save(baseName+'_'+_stamp()+'.pdf');
+}
+function exportCSV2(baseName,headers,rows){
+  const csv=[headers,...rows].map(r=>r.map(c=>{const v=c==null?'':String(c); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;}).join(',')).join('\n');
+  const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:baseName+'_'+_stamp()+'.csv'}); a.click();
+}
+// Build a table + export bar for an array of row objects (used by drill/branch modals).
+function tableModalHTML(rows){
+  const cols=Object.keys(rows[0]); const headers=cols.map(prettyCol);
+  return `<div class="barRow"><div class="muted">${rows.length} rows</div>${exportBar(headers, rows.map(r=>cols.map(c=>r[c])), 'export')}</div>
+    <div class="tableWrap">${tableHTML(headers, rows.map(r=>cols.map(c=>fmtCell(c,r[c]))))}</div>`;
+}
+function openTableModal(title, rows){
+  if(!rows||!rows.length) return modal(title,'<p class="muted">No records.</p>');
+  modal(title+' · '+rows.length+' rows', tableModalHTML(rows));
+}
+function exportDashSummary(fmt){
+  if(!_dash) return toast('Load the dashboard first','err');
+  const headers=['Metric','Value'];
+  const rows=KPI_DEFS.concat(SECONDARY_KPIS.map(([k,l,f])=>({k,l,f}))).map(d=>[d.l, _dash.kpis[d.k]]);
+  runExport(fmt,'dashboard_summary',headers,rows);
 }
 
 /* ════════════════════ New Sale ════════════════════ */
@@ -634,7 +949,7 @@ async function viewSalesList(){
   m.innerHTML=`<h1>Sales</h1><p class="sub">Recent sales (latest first).</p>
     <div class="filters"><div class="field"><label>Branch</label>${branchPicker(true)}</div>
       <button onclick="loadSalesList()">Apply</button>
-      <button class="ghost" onclick="exportCSV('sales')">Export CSV</button></div>
+      ${expMenu('doListExport','sales')}</div>
     <div id="salesTbl"></div>`;
   if($('#fBranch')) $('#fBranch').onchange=loadSalesList;
   loadSalesList();
@@ -696,7 +1011,7 @@ async function viewStock(){
     <div class="filters"><div class="field"><label>Branch</label>${branchPicker(true)}</div>
       <div class="field"><label>Search</label><input id="stkSearch" placeholder="part / vehicle"></div>
       <button onclick="loadStock()">Apply</button>
-      <button class="ghost" onclick="exportCSV('stock')">Export CSV</button>
+      ${expMenu('doListExport','stock')}
       ${canAdd?'<button class="ok" onclick="openAddStock()">+ Add Part</button>':''}</div>
     <div id="stockTbl"></div>`;
   if($('#fBranch')) $('#fBranch').onchange=loadStock;
@@ -748,7 +1063,11 @@ function editStock(id){
       <div class="field"><label>Part No</label><input id="esNo" value="${esc(s.part_no||'')}"></div></div>
     <datalist id="esVehList">${vehicleOptions()}</datalist>
     <div class="row"><div class="field"><label>Source</label><select id="esSrc">${['DMS','Local','Import'].map(o=>`<option ${o===s.source?'selected':''}>${o}</option>`).join('')}</select></div>
-      <div class="field"><label>Selling Price</label><input id="esUP" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div>
+      <div class="field"><label>Category</label><input id="esCat" value="${esc(s.category||'')}" list="catList" placeholder="e.g. Helmets"></div>
+      <div class="field"><label>Brand</label><input id="esBrand" value="${esc(s.brand||'')}" list="brandList" placeholder="e.g. Vega"></div></div>
+    <datalist id="catList">${(CONFIG.categories||[]).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <datalist id="brandList">${(CONFIG.brands||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
+    <div class="row"><div class="field"><label>Selling Price</label><input id="esUP" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div>
       <div class="field"><label>Cost Price</label><input id="esCP" type="number" step="0.01" value="${Number(s.cost_price)||0}"></div></div>
     <div class="row"><div class="field"><label>Init Qty</label><input id="esIQ" type="number" value="${parseInt(s.init_qty)||0}"></div>
       <div class="field"><label>Notes</label><input id="esNotes" value="${esc(s.notes||'')}"></div></div>
@@ -756,6 +1075,7 @@ function editStock(id){
 }
 async function submitEditStock(id,btn){
   const body={vehicle:$('#esVeh').value.trim(),partNo:$('#esNo').value.trim(),source:$('#esSrc').value,
+    category:$('#esCat').value.trim(),brand:$('#esBrand').value.trim(),
     unitPrice:+$('#esUP').value,costPrice:+$('#esCP').value,initQty:+$('#esIQ').value,notes:$('#esNotes').value};
   btn.disabled=true; const r=await apiCall('PUT','/stock/'+encodeURIComponent(id),body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
@@ -786,6 +1106,10 @@ function openAddStock(){
     <datalist id="vehList">${vehicleOptions()}</datalist>
     <div class="row"><div class="field"><label>Part No</label><input id="asNo"></div>
       <div class="field"><label>Source</label><select id="asSrc"><option>DMS</option><option>Local</option><option>Import</option></select></div></div>
+    <div class="row"><div class="field"><label>Category</label><input id="asCat" list="catList" placeholder="e.g. Helmets"></div>
+      <div class="field"><label>Brand</label><input id="asBrand" list="brandList" placeholder="e.g. Vega"></div></div>
+    <datalist id="catList">${(CONFIG.categories||[]).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <datalist id="brandList">${(CONFIG.brands||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
     <div id="dupPartWarn" style="margin:-4px 0 10px"></div>
     <div class="row"><div class="field"><label>Selling Price</label><input id="asUP" type="number" value="0"></div>
       <div class="field"><label>Cost Price</label><input id="asCP" type="number" value="0"></div>
@@ -809,7 +1133,8 @@ function checkDupPart(name,no){
 }
 async function submitStock(btn){
   const body={vehicle:$('#asVeh').value.trim(),partName:$('#asName').value.trim(),partNo:$('#asNo').value.trim(),
-    source:$('#asSrc').value,unitPrice:+$('#asUP').value,costPrice:+$('#asCP').value,initQty:+$('#asIQ').value,notes:$('#asNotes').value};
+    source:$('#asSrc').value,category:$('#asCat').value.trim(),brand:$('#asBrand').value.trim(),
+    unitPrice:+$('#asUP').value,costPrice:+$('#asCP').value,initQty:+$('#asIQ').value,notes:$('#asNotes').value};
   if(!body.vehicle||!body.partName) return toast('Vehicle and part name required','err');
   btn.disabled=true; const r=await apiCall('POST','/stock',body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
@@ -1100,7 +1425,7 @@ async function loadAnalytics(){
   const t=r.data.totals;
   $('#anaTotals').innerHTML=[['Sales',fmtINR(t.sales)],['Gross Profit',fmtINR(t.profit)],
     ['Qty Sold',t.qty],['Transactions',t.txns]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
-  const tabs=[['byPart','By Part'],['byVehicle','By Vehicle'],['byBranch','By Branch'],['bySource','By Source'],['byMonth','By Month'],['staff','By Staff']];
+  const tabs=[['byPart','By Part'],['byVehicle','By Vehicle'],['byBranch','By Branch'],['byCategory','By Category'],['byBrand','By Brand'],['bySource','By Source'],['byMonth','By Month'],['staff','By Staff']];
   $('#anaTabs').innerHTML=tabs.map((t,i)=>`<button class="${i===0?'active':''}" onclick="anaTab('${t[0]}',this)">${t[1]}</button>`).join('');
   anaTab('byPart',$('#anaTabs').firstChild);
 }
@@ -1109,7 +1434,8 @@ function anaTab(key,btn){
   if(btn) btn.classList.add('active');
   const rows=_ana[key]; if(!rows||!rows.length){ $('#anaBody').innerHTML='<p class="muted">No data.</p>'; return; }
   const cols=Object.keys(rows[0]);
-  $('#anaBody').innerHTML=`<div class="tableWrap">${tableHTML(cols.map(prettyCol),
+  $('#anaBody').innerHTML=`<div class="barRow"><div class="muted">${rows.length} rows</div>${exportBar(cols.map(prettyCol), rows.map(r=>cols.map(c=>r[c])), 'analytics_'+key)}</div>
+    <div class="tableWrap">${tableHTML(cols.map(prettyCol),
     rows.map(r=>cols.map(c=>fmtCell(c,r[c]))))}</div>`;
 }
 
@@ -1374,15 +1700,13 @@ function generateInvoicePDF(s){
   doc.save('Invoice_'+(s.invoice_no||s.id)+'.pdf');
 }
 
-function exportCSV(kind){
+// Export a live list cache (sales / stock) as Excel / PDF / CSV.
+function doListExport(kind, fmt){
   const data = kind==='sales'?_salesCache:_stockCache;
   if(!data||!data.length) return toast('Nothing to export','err');
   const cols=Object.keys(data[0]);
-  const csv=[cols.join(',')].concat(data.map(r=>cols.map(c=>{
-    const v=r[c]==null?'':String(r[c]); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v;
-  }).join(','))).join('\n');
-  const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:kind+'_'+Date.now()+'.csv'});
-  a.click();
+  runExport(fmt, kind, cols.map(prettyCol), data.map(r=>cols.map(c=>r[c])));
+  document.querySelectorAll('details.exp[open]').forEach(d=>d.open=false);
 }
 
 /* ════════════════════ Init ════════════════════ */
