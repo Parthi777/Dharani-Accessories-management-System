@@ -21,10 +21,10 @@ router.get('/', (req, res) => {
       gstMode: store.getSetting('GST_MODE', 'exclusive'),
       gstEnabled: store.getSetting('GST_ENABLED', 'true') !== 'false',
       gstin: store.getSetting('GSTIN', ''),
-      // Filter option lists for the dashboard global filters.
+      // Filter / form option lists.
       categories: distinct('stock', 'category'),
-      brands: distinct('stock', 'brand'),
-      suppliers: distinct('inward', 'supplier'),
+      // Supplier master (active names), used by stock/inward forms and the dashboard filter.
+      suppliers: store.all('suppliers').filter(s => s.status === 'Active').map(s => s.name).sort((a, b) => a.localeCompare(b)),
     },
   });
 });

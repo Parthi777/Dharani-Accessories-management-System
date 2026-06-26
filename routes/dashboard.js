@@ -20,14 +20,13 @@ function scope(req) {
   return { branch, mine: req.user.role === 'Sales_Staff', email: req.user.email };
 }
 
-// part key → { category, brand, source, cost_price, vehicle }
+// part key → { category, supplier, cost_price, vehicle }  (supplier is stored in stock.source)
 function buildPartMeta() {
   const m = new Map();
   for (const s of store.all('stock')) {
     m.set(pk(s.part_name, s.part_no), {
       category: (s.category || '').trim() || 'Untagged',
-      brand: (s.brand || '').trim() || 'Untagged',
-      source: s.source || 'Unknown',
+      supplier: (s.source || '').trim() || 'Unassigned',
       cost_price: n(s.cost_price),
       vehicle: s.vehicle,
     });
@@ -35,45 +34,40 @@ function buildPartMeta() {
   return m;
 }
 const metaCat = (meta, s) => (meta.get(pk(s.part_name, s.part_no)) || {}).category || 'Untagged';
-const metaBrand = (meta, s) => (meta.get(pk(s.part_name, s.part_no)) || {}).brand || 'Untagged';
 
-// Set of part keys ever supplied by `supplier` (null = no supplier filter).
+// Set of part keys belonging to `supplier` (the part's stock.source). null = no filter.
 function partsForSupplier(supplier) {
   if (!supplier || supplier === 'ALL') return null;
   const set = new Set();
-  for (const i of store.all('inward')) if ((i.supplier || '') === supplier) set.add(pk(i.part_name, i.part_no));
+  for (const s of store.all('stock')) if ((s.source || '') === supplier) set.add(pk(s.part_name, s.part_no));
   return set;
 }
 
-// Apply branch + personal + category/brand/supplier filters to sale rows.
+// Apply branch + personal + category/supplier filters to sale rows.
 function filterSales(rows, { branch, mine, email }, meta, f, supParts) {
   return rows.filter(s => {
     if (branch && s.branch !== branch) return false;
     if (mine && s.staff_email !== email) return false;
     if (f.category && f.category !== 'ALL' && metaCat(meta, s) !== f.category) return false;
-    if (f.brand && f.brand !== 'ALL' && metaBrand(meta, s) !== f.brand) return false;
     if (supParts && !supParts.has(pk(s.part_name, s.part_no))) return false;
     return true;
   });
 }
 
-// Apply branch + category/brand/supplier to inward (purchase) rows. No personal filter.
+// Apply branch + category/supplier to inward (purchase) rows. No personal filter.
 function filterInward(rows, { branch }, meta, f, supParts) {
   return rows.filter(i => {
     if (branch && i.branch !== branch) return false;
     if (f.category && f.category !== 'ALL' && ((meta.get(pk(i.part_name, i.part_no)) || {}).category || 'Untagged') !== f.category) return false;
-    if (f.brand && f.brand !== 'ALL' && ((meta.get(pk(i.part_name, i.part_no)) || {}).brand || 'Untagged') !== f.brand) return false;
-    if (f.supplier && f.supplier !== 'ALL' && (i.supplier || '') !== f.supplier) return false;
     if (supParts && !supParts.has(pk(i.part_name, i.part_no))) return false;
     return true;
   });
 }
 
-// Stock rows (with current qty) filtered by category/brand/supplier.
+// Stock rows (with current qty) filtered by category/supplier.
 function filterStock(branch, meta, f, supParts) {
   return store.stockWithQty(branch).filter(s => {
     if (f.category && f.category !== 'ALL' && ((s.category || '').trim() || 'Untagged') !== f.category) return false;
-    if (f.brand && f.brand !== 'ALL' && ((s.brand || '').trim() || 'Untagged') !== f.brand) return false;
     if (supParts && !supParts.has(pk(s.part_name, s.part_no))) return false;
     return true;
   });
@@ -119,12 +113,12 @@ function lastInwardByPartMap() {
   return m;
 }
 
-// GET /api/dashboard?branch=&from=&to=&category=&brand=&supplier=&gran=
+// GET /api/dashboard?branch=&from=&to=&category=&supplier=&gran=
 router.get('/', (req, res) => {
   try {
     const sc = scope(req);
     const { from, to, gran = 'day' } = req.query;
-    const f = { category: req.query.category, brand: req.query.brand, supplier: req.query.supplier };
+    const f = { category: req.query.category, supplier: req.query.supplier };
     const supParts = partsForSupplier(req.query.supplier);
     const meta = buildPartMeta();
     const lowThr = parseInt(store.getSetting('LOW_STOCK_THRESHOLD', '5'));
@@ -179,11 +173,13 @@ router.get('/', (req, res) => {
     for (const i of rangeInward) { svpRow(i.inward_date.slice(0, 7)).purchase += n(i.total_cost); }
     const salesVsPurchase = [...svp.values()].sort((a, b) => a.month.localeCompare(b.month));
 
-    // 4. Sales by category  &  6. Sales by brand
+    // 4. Sales by category
     const aggKey = (keyFn) => [...((arr) => { const m = new Map();
       for (const s of arr) { const k = keyFn(s); const e = m.get(k) || { value: 0, qty: 0 }; e.value += n(s.sale_value); e.qty += n(s.qty); m.set(k, e); } return m; })(rangeSales).entries()];
     const byCategory = aggKey(s => metaCat(meta, s)).map(([category, e]) => ({ category, ...e })).sort((a, b) => b.value - a.value);
-    const byBrand = aggKey(s => metaBrand(meta, s)).map(([brand, e]) => ({ brand, ...e })).sort((a, b) => b.value - a.value);
+    // 6. Sales by supplier (the part's stock.source)
+    const bySupplier = aggKey(s => (meta.get(pk(s.part_name, s.part_no)) || {}).supplier || 'Unassigned')
+      .map(([supplier, e]) => ({ supplier, ...e })).sort((a, b) => b.value - a.value);
 
     // 5. Top 10 selling parts (qty + value)
     const partAgg = new Map();
@@ -277,7 +273,7 @@ router.get('/', (req, res) => {
 
     res.json({ ok: true, data: {
       kpis,
-      charts: { trend, byBranch, salesVsPurchase, byCategory, topParts, byBrand, stockByBranch, inventoryValueByBranch, stockAging, profitTrend, branchPerformance, staffPerformance },
+      charts: { trend, byBranch, salesVsPurchase, byCategory, topParts, bySupplier, stockByBranch, inventoryValueByBranch, stockAging, profitTrend, branchPerformance, staffPerformance },
       alerts, recent,
     } });
   } catch (e) {
@@ -285,13 +281,13 @@ router.get('/', (req, res) => {
   }
 });
 
-// GET /api/dashboard/drill/:type?branch=&from=&to=&category=&brand=&supplier=&key=
+// GET /api/dashboard/drill/:type?branch=&from=&to=&category=&supplier=&key=
 router.get('/drill/:type', (req, res) => {
   try {
     const { type } = req.params;
     const { from, to, key, pno } = req.query;
     const sc = scope(req);
-    const f = { category: req.query.category, brand: req.query.brand, supplier: req.query.supplier };
+    const f = { category: req.query.category, supplier: req.query.supplier };
     const supParts = partsForSupplier(req.query.supplier);
     const meta = buildPartMeta();
     const lowThr = parseInt(store.getSetting('LOW_STOCK_THRESHOLD', '5'));
@@ -304,7 +300,7 @@ router.get('/drill/:type', (req, res) => {
     const byDateDesc = (a, b) => (b.sale_date + (b.created_at || '')).localeCompare(a.sale_date + (a.created_at || ''));
     const ranged = () => sales.filter(s => inRange(s.sale_date, from, to));
 
-    const stockSel = s => ({ vehicle: s.vehicle, part_name: s.part_name, part_no: s.part_no, category: s.category, brand: s.brand,
+    const stockSel = s => ({ vehicle: s.vehicle, part_name: s.part_name, part_no: s.part_no, category: s.category, supplier: s.source,
       cost_price: s.cost_price, unit_price: s.unit_price, qty: s.current_qty, value: n(s.current_qty) * n(s.cost_price) });
     const stockRows = () => filterStock(sc.branch, meta, f, supParts).map(stockSel);
 
@@ -332,7 +328,7 @@ router.get('/drill/:type', (req, res) => {
         rows = [...m.values()].sort((a, b) => b.sale_value - a.sale_value); break;
       }
       case 'category': rows = ranged().filter(s => metaCat(meta, s) === key).sort(byDateDesc).map(sel); break;
-      case 'brand': rows = ranged().filter(s => metaBrand(meta, s) === key).sort(byDateDesc).map(sel); break;
+      case 'supplier_sales': rows = ranged().filter(s => ((meta.get(pk(s.part_name, s.part_no)) || {}).supplier || 'Unassigned') === key).sort(byDateDesc).map(sel); break;
       case 'staff': rows = ranged().filter(s => (s.staff_email || '—') === key).sort(byDateDesc).map(sel); break;
       case 'month': rows = ranged().filter(s => s.sale_date.slice(0, 7) === key).sort(byDateDesc).map(sel); break;
       case 'top_part': rows = ranged().filter(s => s.part_name === key && (!pno || s.part_no === pno)).sort(byDateDesc).map(sel); break;

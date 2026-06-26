@@ -44,7 +44,7 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (r
         const id = store.nextSeqId('stock', 'id', 'STK', 4);
         [part] = await store.appendNoLock('stock', {
           id, vehicle: b.vehicle || 'Unassigned', part_name: partName, part_no: b.partNo || '—',
-          source: b.source || 'DMS', unit_price: selling != null ? selling : 0, cost_price: cost != null ? cost : 0,
+          source: b.supplier || '', unit_price: selling != null ? selling : 0, cost_price: cost != null ? cost : 0,
           init_qty: 0, notes: '',
         });
       }
@@ -95,7 +95,7 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
         let p = store.findStock(partName, partNo) || newStock.find(s => store.partKey(s.part_name, s.part_no) === k);
         if (p) return p;
         p = { id: 'STK' + pad(++stockMax, 4), vehicle: vehicle || 'Unassigned', part_name: partName,
-              part_no: partNo || '—', source: 'DMS',
+              part_no: partNo || '—', source: '',
               unit_price: selling != null ? selling : 0, cost_price: cost != null ? cost : 0,
               init_qty: 0, notes: '' };
         newStock.push(p);

@@ -25,7 +25,7 @@ function groupBy(rows, keyFn, { txns = false } = {}) {
   });
 }
 
-// GET /api/analytics?branch=&from=&to= → breakdowns by part, vehicle, branch, category, brand, source, month, staff
+// GET /api/analytics?branch=&from=&to= → breakdowns by part, vehicle, branch, category, supplier, month, staff
 router.get('/', (req, res) => {
   try {
     let branch = req.query.branch;
@@ -35,7 +35,7 @@ router.get('/', (req, res) => {
 
     const pk = (name, no) => store.partKey(name, no);
     const stockBy = new Map(store.all('stock').map(s => [pk(s.part_name, s.part_no),
-      { source: s.source, category: (s.category || '').trim() || 'Untagged', brand: (s.brand || '').trim() || 'Untagged' }]));
+      { supplier: (s.source || '').trim() || 'Unassigned', category: (s.category || '').trim() || 'Untagged' }]));
     const tag = (s, field) => (stockBy.get(pk(s.part_name, s.part_no)) || {})[field];
 
     const rows = store.all('sales').filter(s =>
@@ -52,10 +52,8 @@ router.get('/', (req, res) => {
       .map(([branch, e]) => ({ branch, ...e })).sort((a, b) => b.sales - a.sales);
     const byCategory = groupBy(rows, s => tag(s, 'category') || 'Untagged')
       .map(([category, e]) => ({ category, qty: e.qty, sales: e.sales, profit: e.profit })).sort((a, b) => b.sales - a.sales);
-    const byBrand = groupBy(rows, s => tag(s, 'brand') || 'Untagged')
-      .map(([brand, e]) => ({ brand, qty: e.qty, sales: e.sales, profit: e.profit })).sort((a, b) => b.sales - a.sales);
-    const bySource = groupBy(rows, s => tag(s, 'source') || 'Unknown')
-      .map(([source, e]) => ({ source, qty: e.qty, sales: e.sales })).sort((a, b) => b.sales - a.sales);
+    const bySupplier = groupBy(rows, s => tag(s, 'supplier') || 'Unassigned')
+      .map(([supplier, e]) => ({ supplier, qty: e.qty, sales: e.sales, profit: e.profit })).sort((a, b) => b.sales - a.sales);
     const byMonth = groupBy(rows, s => String(s.sale_date).slice(0, 7))
       .map(([month, e]) => ({ month, sales: e.sales, profit: e.profit, qty: e.qty })).sort((a, b) => a.month.localeCompare(b.month));
     const staff = groupBy(rows, s => s.staff_email || '—', { txns: true })
@@ -68,7 +66,7 @@ router.get('/', (req, res) => {
       txns: rows.length,
     };
 
-    res.json({ ok: true, data: { totals, byPart, byVehicle, byBranch, byCategory, byBrand, bySource, byMonth, staff } });
+    res.json({ ok: true, data: { totals, byPart, byVehicle, byBranch, byCategory, bySupplier, byMonth, staff } });
   } catch (e) {
     console.error('analytics error', e); res.status(500).json({ ok: false, msg: 'Server error' });
   }

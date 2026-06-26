@@ -232,7 +232,7 @@
 /* ════════════════════ Core ════════════════════ */
 const API = '/api';
 const COMPANY = 'Bhavani Dharani TVS';   // fallback name on PDF invoices
-let CONFIG = { company: COMPANY, currency: 'INR', gstRate: 0, gstMode: 'exclusive', gstEnabled: true, gstin: '', categories: [], brands: [], suppliers: [] };
+let CONFIG = { company: COMPANY, currency: 'INR', gstRate: 0, gstMode: 'exclusive', gstEnabled: true, gstin: '', categories: [], suppliers: [] };
 let TOKEN = localStorage.getItem('dams_token') || '';
 let USER = null;
 try { USER = JSON.parse(localStorage.getItem('dams_user') || 'null'); } catch {}
@@ -309,6 +309,7 @@ const NAV = [
   { id:'bulk',      label:'Bulk Inward',ico:'⇪', roles:['Admin','Branch_Manager','Store_Staff'] },
   { id:'transfer',  label:'Stock Transfer',ico:'⇄', roles:['Admin','Branch_Manager','Store_Staff'] },
   { id:'analytics', label:'Analytics', ico:'◔',  roles:['Admin','Branch_Manager','Accountant'] },
+  { id:'suppliers', label:'Suppliers', ico:'🏭', roles:['Admin'] },
   { id:'branches',  label:'Branches',  ico:'⌂',  roles:['Admin'] },
   { id:'users',     label:'Users',     ico:'⛁',  roles:['Admin'] },
   { id:'settings',  label:'Settings',  ico:'⚙',  roles:['Admin'] },
@@ -348,7 +349,7 @@ function go(id){
   location.hash = id;
   document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('active', a.dataset.id===id));
   const views = { dashboard:viewDashboard, sales:viewSale, saleslist:viewSalesList, stock:viewStock,
-    inward:viewInward, bulk:viewBulk, transfer:viewTransfer, analytics:viewAnalytics, branches:viewBranches, users:viewUsers, settings:viewSettings };
+    inward:viewInward, bulk:viewBulk, transfer:viewTransfer, analytics:viewAnalytics, suppliers:viewSuppliers, branches:viewBranches, users:viewUsers, settings:viewSettings };
   (views[id]||viewDashboard)();
 }
 
@@ -392,7 +393,7 @@ const CHART_PANELS=[
   {id:'cSVP', title:'Monthly Sales vs Purchase', role:'all'},
   {id:'cCat', title:'Sales by Category', role:'all'},
   {id:'cTop', title:'Top 10 Selling', role:'all', head:()=>topToggle()},
-  {id:'cBrand', title:'Sales by Brand', role:'all'},
+  {id:'cSupplier', title:'Sales by Supplier', role:'all'},
   {id:'cStockBranch', title:'Stock by Branch', role:'multi'},
   {id:'cInvVal', title:'Inventory Value by Branch', role:'multi'},
   {id:'cAging', title:'Stock Aging', role:'all'},
@@ -404,7 +405,7 @@ const CHART_PANELS=[
 // ── Filters → query string ──────────────────────────────────────────────────
 function dashFilters(){
   return { branch:curBranch()||'ALL', from:$('#fFrom')?.value||'', to:$('#fTo')?.value||'',
-    category:$('#fCat')?.value||'ALL', brand:$('#fBrand')?.value||'ALL', supplier:$('#fSupp')?.value||'ALL' };
+    category:$('#fCat')?.value||'ALL', supplier:$('#fSupp')?.value||'ALL' };
 }
 function dashQS(extra={}){
   const f={...dashFilters()};
@@ -453,7 +454,6 @@ async function viewDashboard(){
       <div class="field"><label>From</label><input id="fFrom" type="date"></div>
       <div class="field"><label>To</label><input id="fTo" type="date"></div>
       <div class="field"><label>Category</label><select id="fCat">${optionList(CONFIG.categories,'All categories')}</select></div>
-      <div class="field"><label>Brand</label><select id="fBrand">${optionList(CONFIG.brands,'All brands')}</select></div>
       <div class="field"><label>Supplier</label><select id="fSupp">${optionList(CONFIG.suppliers,'All suppliers')}</select></div>
       <button onclick="loadDashboard()">Apply</button>
       <span class="toggle">${[['today','Today'],['week','Week'],['month','Month'],['year','Year']].map(([p,l])=>`<button onclick="setDatePreset('${p}')">${l}</button>`).join('')}</span>
@@ -523,11 +523,11 @@ async function loadDashboard(){
       onClick:(e,els)=>{ if(els.length) chartDrill('category',ch.byCategory[els[0].index].category,'Category · '+ch.byCategory[els[0].index].category); }}});
   // 5. Top 10 selling — horizontal bar (Qty/Value toggle) → part drill
   renderTopChart();
-  // 6. Sales by brand — doughnut → brand drill
-  if($('#cBrand')) charts.brand=new Chart($('#cBrand'),{type:'doughnut',
-    data:{labels:ch.byBrand.map(b=>b.brand),datasets:[{data:ch.byBrand.map(b=>b.value),backgroundColor:PALETTE,borderColor:'#fff',borderWidth:2,hoverOffset:8}]},
+  // 6. Sales by supplier — doughnut → supplier sales drill
+  if($('#cSupplier')) charts.supplier=new Chart($('#cSupplier'),{type:'doughnut',
+    data:{labels:ch.bySupplier.map(b=>b.supplier),datasets:[{data:ch.bySupplier.map(b=>b.value),backgroundColor:PALETTE,borderColor:'#fff',borderWidth:2,hoverOffset:8}]},
     options:{cutout:'62%',plugins:{legend:{position:'right',labels:{color:'#475569'}}},
-      onClick:(e,els)=>{ if(els.length) chartDrill('brand',ch.byBrand[els[0].index].brand,'Brand · '+ch.byBrand[els[0].index].brand); }}});
+      onClick:(e,els)=>{ if(els.length) chartDrill('supplier_sales',ch.bySupplier[els[0].index].supplier,'Supplier · '+ch.bySupplier[els[0].index].supplier); }}});
   // 7. Stock by branch — stacked bar → branch drill
   if($('#cStockBranch')){
     const sb=ch.stockByBranch;
@@ -1027,7 +1027,7 @@ function renderStock(){
   const q=($('#stkSearch')?.value||'').toLowerCase();
   const rows=_stockCache.filter(s=>!q||s.part_name.toLowerCase().includes(q)||(s.vehicle||'').toLowerCase().includes(q));
   const low=5; const isAdmin=USER.role==='Admin';
-  const headers=['Vehicle','Part','Part No','Source','Selling','Cost','Qty','Status'].concat(isAdmin?['']:[]);
+  const headers=['Vehicle','Part','Part No','Supplier','Selling','Cost','Qty','Status'].concat(isAdmin?['']:[]);
   $('#stockTbl').innerHTML = rows.length ? `<div class="tableWrap">${tableHTML(
     headers,
     rows.map(s=>{ const cq=Number(s.current_qty);
@@ -1062,11 +1062,10 @@ function editStock(id){
     <div class="row"><div class="field"><label>Vehicle</label><input id="esVeh" value="${esc(s.vehicle||'')}" list="esVehList"></div>
       <div class="field"><label>Part No</label><input id="esNo" value="${esc(s.part_no||'')}"></div></div>
     <datalist id="esVehList">${vehicleOptions()}</datalist>
-    <div class="row"><div class="field"><label>Source</label><select id="esSrc">${['DMS','Local','Import'].map(o=>`<option ${o===s.source?'selected':''}>${o}</option>`).join('')}</select></div>
-      <div class="field"><label>Category</label><input id="esCat" value="${esc(s.category||'')}" list="catList" placeholder="e.g. Helmets"></div>
-      <div class="field"><label>Brand</label><input id="esBrand" value="${esc(s.brand||'')}" list="brandList" placeholder="e.g. Vega"></div></div>
+    <div class="row"><div class="field"><label>Supplier</label><input id="esSup" value="${esc(s.source||'')}" list="supList" placeholder="pick / add in Suppliers"></div>
+      <div class="field"><label>Category</label><input id="esCat" value="${esc(s.category||'')}" list="catList" placeholder="e.g. Helmets"></div></div>
     <datalist id="catList">${(CONFIG.categories||[]).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
-    <datalist id="brandList">${(CONFIG.brands||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
+    <datalist id="supList">${(CONFIG.suppliers||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
     <div class="row"><div class="field"><label>Selling Price</label><input id="esUP" type="number" step="0.01" value="${Number(s.unit_price)||0}"></div>
       <div class="field"><label>Cost Price</label><input id="esCP" type="number" step="0.01" value="${Number(s.cost_price)||0}"></div></div>
     <div class="row"><div class="field"><label>Init Qty</label><input id="esIQ" type="number" value="${parseInt(s.init_qty)||0}"></div>
@@ -1074,8 +1073,8 @@ function editStock(id){
     <button onclick="submitEditStock('${esc(s.id)}',this)">Save Changes</button>`);
 }
 async function submitEditStock(id,btn){
-  const body={vehicle:$('#esVeh').value.trim(),partNo:$('#esNo').value.trim(),source:$('#esSrc').value,
-    category:$('#esCat').value.trim(),brand:$('#esBrand').value.trim(),
+  const body={vehicle:$('#esVeh').value.trim(),partNo:$('#esNo').value.trim(),source:$('#esSup').value.trim(),
+    category:$('#esCat').value.trim(),
     unitPrice:+$('#esUP').value,costPrice:+$('#esCP').value,initQty:+$('#esIQ').value,notes:$('#esNotes').value};
   btn.disabled=true; const r=await apiCall('PUT','/stock/'+encodeURIComponent(id),body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
@@ -1105,11 +1104,10 @@ function openAddStock(){
       <div class="field"><label>Part Name</label><input id="asName"></div></div>
     <datalist id="vehList">${vehicleOptions()}</datalist>
     <div class="row"><div class="field"><label>Part No</label><input id="asNo"></div>
-      <div class="field"><label>Source</label><select id="asSrc"><option>DMS</option><option>Local</option><option>Import</option></select></div></div>
-    <div class="row"><div class="field"><label>Category</label><input id="asCat" list="catList" placeholder="e.g. Helmets"></div>
-      <div class="field"><label>Brand</label><input id="asBrand" list="brandList" placeholder="e.g. Vega"></div></div>
+      <div class="field"><label>Supplier</label><input id="asSup" list="supList" placeholder="pick / add in Suppliers"></div></div>
+    <div class="row"><div class="field"><label>Category</label><input id="asCat" list="catList" placeholder="e.g. Helmets"></div></div>
     <datalist id="catList">${(CONFIG.categories||[]).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
-    <datalist id="brandList">${(CONFIG.brands||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
+    <datalist id="supList">${(CONFIG.suppliers||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
     <div id="dupPartWarn" style="margin:-4px 0 10px"></div>
     <div class="row"><div class="field"><label>Selling Price</label><input id="asUP" type="number" value="0"></div>
       <div class="field"><label>Cost Price</label><input id="asCP" type="number" value="0"></div>
@@ -1133,7 +1131,7 @@ function checkDupPart(name,no){
 }
 async function submitStock(btn){
   const body={vehicle:$('#asVeh').value.trim(),partName:$('#asName').value.trim(),partNo:$('#asNo').value.trim(),
-    source:$('#asSrc').value,category:$('#asCat').value.trim(),brand:$('#asBrand').value.trim(),
+    source:$('#asSup').value.trim(),category:$('#asCat').value.trim(),
     unitPrice:+$('#asUP').value,costPrice:+$('#asCP').value,initQty:+$('#asIQ').value,notes:$('#asNotes').value};
   if(!body.vehicle||!body.partName) return toast('Vehicle and part name required','err');
   btn.disabled=true; const r=await apiCall('POST','/stock',body); btn.disabled=false;
@@ -1153,29 +1151,25 @@ async function viewInward(){
         <div class="field"><label>Part Name</label><input id="iPart" list="partList"></div></div>
       <datalist id="vehList2">${vehicleOptions()}</datalist>
       <datalist id="partList">${Object.values(VPMAP).flat().map(p=>`<option>${esc(p)}</option>`).join('')}</datalist>
-      <div class="row"><div class="field"><label>Source</label><select id="iSrc"><option>DMS</option><option>Local</option><option>Import</option></select></div>
-        <div class="field"><label id="iNoLbl">Part No *</label><input id="iNo"></div>
+      <div class="row"><div class="field"><label>Supplier</label><input id="iSup" list="supList2" placeholder="pick / add in Suppliers"></div>
+        <div class="field"><label>Part No</label><input id="iNo"></div>
         <div class="field"><label>Qty</label><input id="iQty" type="number" min="1" value="1"></div></div>
+      <datalist id="supList2">${(CONFIG.suppliers||[]).map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
       <div class="row"><div class="field"><label>Unit Price (cost)</label><input id="iCost" type="number" step="0.01" value="0"></div>
         <div class="field"><label>Selling Price</label><input id="iSell" type="number" step="0.01" value="0"></div></div>
-      <div class="row"><div class="field"><label>Supplier</label><input id="iSup"></div>
-        <div class="field"><label>Batch No</label><input id="iBatch"></div></div>
-      <div class="field"><label>Remarks</label><input id="iRem"></div>
+      <div class="row"><div class="field"><label>Batch No</label><input id="iBatch"></div>
+        <div class="field"><label>Remarks</label><input id="iRem"></div></div>
       <button onclick="submitInward(this)">Save Inward</button>
     </div>`;
   $('#iDate').value=new Date().toISOString().slice(0,10);
-  // Part No is only required for DMS parts — reflect that in the label.
-  const syncNoLbl=()=>{ $('#iNoLbl').textContent = $('#iSrc').value==='DMS' ? 'Part No *' : 'Part No (optional)'; };
-  $('#iSrc').onchange=syncNoLbl; syncNoLbl();
 }
 async function submitInward(btn){
-  const source=$('#iSrc').value; const partNo=$('#iNo').value.trim();
+  const partNo=$('#iNo').value.trim(); const supplier=$('#iSup').value.trim();
   const body={inwardDate:$('#iDate').value,branch:curBranch(),vehicle:$('#iVeh').value.trim(),
-    partName:$('#iPart').value.trim(),partNo:partNo||undefined,source,qty:+$('#iQty').value,
+    partName:$('#iPart').value.trim(),partNo:partNo||undefined,qty:+$('#iQty').value,
     unitCost:+$('#iCost').value,sellingPrice:+$('#iSell').value,
-    supplier:$('#iSup').value||undefined,batchNo:$('#iBatch').value||undefined,remarks:$('#iRem').value||undefined};
+    supplier:supplier||undefined,batchNo:$('#iBatch').value||undefined,remarks:$('#iRem').value||undefined};
   if(!body.partName||!body.qty) return toast('Part and qty required','err');
-  if(source==='DMS' && !partNo) return toast('Part No is required for DMS parts','err');
   btn.disabled=true; const r=await apiCall('POST','/inward',body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
   if(r.vpmap) VPMAP=r.vpmap;
@@ -1425,7 +1419,7 @@ async function loadAnalytics(){
   const t=r.data.totals;
   $('#anaTotals').innerHTML=[['Sales',fmtINR(t.sales)],['Gross Profit',fmtINR(t.profit)],
     ['Qty Sold',t.qty],['Transactions',t.txns]].map(([l,v])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
-  const tabs=[['byPart','By Part'],['byVehicle','By Vehicle'],['byBranch','By Branch'],['byCategory','By Category'],['byBrand','By Brand'],['bySource','By Source'],['byMonth','By Month'],['staff','By Staff']];
+  const tabs=[['byPart','By Part'],['byVehicle','By Vehicle'],['byBranch','By Branch'],['byCategory','By Category'],['bySupplier','By Supplier'],['byMonth','By Month'],['staff','By Staff']];
   $('#anaTabs').innerHTML=tabs.map((t,i)=>`<button class="${i===0?'active':''}" onclick="anaTab('${t[0]}',this)">${t[1]}</button>`).join('');
   anaTab('byPart',$('#anaTabs').firstChild);
 }
@@ -1514,6 +1508,73 @@ async function confirmDeleteBranch(id,btn){
   toast('Branch deleted'+note); closeModal();
   const bm=await apiCall('GET','/branches'); if(bm.ok) BRANCHES=bm.data;
   loadBranchesAdmin();
+}
+
+/* ════════════════════ Suppliers (master) ════════════════════ */
+async function viewSuppliers(){
+  $('#main').innerHTML=`<h1>Suppliers</h1><p class="sub">Supplier master. Used when adding parts and stock inward.</p>
+    <button class="ok" onclick="openAddSupplier()">+ Add Supplier</button>
+    <div id="supTbl" style="margin-top:14px"></div>`;
+  loadSuppliers();
+}
+let _supplierCache=[];
+async function refreshSuppliers(){ const c=await apiCall('GET','/config'); if(c.ok) CONFIG.suppliers=c.data.suppliers||[]; }
+async function loadSuppliers(){
+  const r=await apiCall('GET','/suppliers?all=1');
+  if(!r.ok) return toast(r.msg,'err'); _supplierCache=r.data;
+  $('#supTbl').innerHTML=r.data.length?`<div class="tableWrap">${tableHTML(
+    ['ID','Name','Contact','Address','Status',''],
+    r.data.map(s=>[s.id,esc(s.name),esc(s.contact||'—'),esc(s.address||'—'),
+      s.status==='Active'?'<span class="pill green">Active</span>':'<span class="pill gray">Inactive</span>',
+      `<button class="sm ghost" onclick="editSupplier('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteSupplier('${s.id}')">Delete</button>`]))}</div>`
+    : '<p class="muted">No suppliers yet. Add your first supplier.</p>';
+}
+function openAddSupplier(){
+  modal('Add Supplier',`
+    <div class="field"><label>Name</label><input id="spName"></div>
+    <div class="row"><div class="field"><label>Contact</label><input id="spContact"></div>
+      <div class="field"><label>Address</label><input id="spAddr"></div></div>
+    <button onclick="submitSupplier(this)">Save</button>`);
+}
+async function submitSupplier(btn){
+  const body={name:$('#spName').value.trim(),contact:$('#spContact').value,address:$('#spAddr').value};
+  if(!body.name) return toast('Name required','err');
+  btn.disabled=true; const r=await apiCall('POST','/suppliers',body); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  toast('Supplier added'); closeModal(); await refreshSuppliers(); loadSuppliers();
+}
+function editSupplier(id){
+  const s=_supplierCache.find(x=>x.id===id); if(!s) return;
+  modal('Edit Supplier',`
+    <div class="field"><label>Name (not editable — used on parts/inward)</label><input value="${esc(s.name)}" disabled></div>
+    <div class="row"><div class="field"><label>Contact</label><input id="espContact" value="${esc(s.contact||'')}"></div>
+      <div class="field"><label>Address</label><input id="espAddr" value="${esc(s.address||'')}"></div></div>
+    <div class="field"><label>Status</label><select id="espStatus">
+      <option ${s.status==='Active'?'selected':''}>Active</option>
+      <option ${s.status==='Inactive'?'selected':''}>Inactive</option></select></div>
+    <button onclick="submitEditSupplier('${s.id}',this)">Save Changes</button>`);
+}
+async function submitEditSupplier(id,btn){
+  const body={contact:$('#espContact').value,address:$('#espAddr').value,status:$('#espStatus').value};
+  btn.disabled=true; const r=await apiCall('PUT','/suppliers/'+id,body); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err'); toast('Supplier updated'); closeModal();
+  await refreshSuppliers(); loadSuppliers();
+}
+function deleteSupplier(id){
+  const s=_supplierCache.find(x=>x.id===id); if(!s) return;
+  modal('Delete Supplier',`
+    <p>Delete supplier <b>${esc(s.name)}</b>?</p>
+    <p class="muted">Parts and inward rows already naming this supplier are kept. Set it Inactive instead to hide it from the dropdowns.</p>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="danger" onclick="confirmDeleteSupplier('${esc(s.id)}',this)">Delete supplier</button>
+      <button class="ghost" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function confirmDeleteSupplier(id,btn){
+  btn.disabled=true; const r=await apiCall('DELETE','/suppliers/'+encodeURIComponent(id)); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  const f=r.data&&r.data.refs; const note=f&&(f.stock||f.inward)?` (kept: ${f.stock} parts, ${f.inward} inward)`:'';
+  toast('Supplier deleted'+note); closeModal(); await refreshSuppliers(); loadSuppliers();
 }
 
 /* ════════════════════ Users ════════════════════ */
