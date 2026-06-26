@@ -180,7 +180,7 @@
 /* ════════════════════ Core ════════════════════ */
 const API = '/api';
 const COMPANY = 'Bhavani Dharani TVS';   // fallback name on PDF invoices
-let CONFIG = { company: COMPANY, currency: 'INR', gstRate: 0, gstMode: 'exclusive', gstin: '' };
+let CONFIG = { company: COMPANY, currency: 'INR', gstRate: 0, gstMode: 'exclusive', gstEnabled: true, gstin: '' };
 let TOKEN = localStorage.getItem('dams_token') || '';
 let USER = null;
 try { USER = JSON.parse(localStorage.getItem('dams_user') || 'null'); } catch {}
@@ -414,7 +414,7 @@ function fmtCell(col,val){
 
 /* ════════════════════ New Sale ════════════════════ */
 function vehicleOptions(){ return Object.keys(VPMAP).sort().map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(''); }
-let _previewSale=null, _salePart=null, _transferPart=null, STOCK=[];
+let _previewSale=null, _salePart=null, _transferPart=null, STOCK=[], _saleItems=[];
 async function fetchStockList(){ const r=await apiCall('GET','/stock?branch=ALL'); STOCK = r.ok ? r.data : []; return STOCK; }
 // Distinct vehicles present in the live stock catalogue.
 function stockVehicles(){ return [...new Set(STOCK.map(s=>s.vehicle))].filter(Boolean).sort(); }
@@ -435,20 +435,24 @@ async function viewSale(){
           <div class="field"><label>Invoice No (auto)</label><input id="sInv" disabled></div>
         </div>
         <div class="row">
+          <div class="field"><label>Customer Type</label><select id="sCustType"><option>New Vehicle</option><option>Service Customer</option></select></div>
           <div class="field"><label>Customer Name</label><input id="sCust" placeholder="customer name"></div>
-          <div class="field"><label>Vehicle No</label><input id="sVehNo" placeholder="e.g. TN-33-AB-1234"></div>
+          <div class="field" id="vehNoField" style="display:none"><label>Vehicle No</label><input id="sVehNo" placeholder="e.g. TN-33-AB-1234"></div>
         </div>
+        <div style="border-top:1px solid var(--line);margin:4px 0 12px"></div>
         <div class="row">
-          <div class="field"><label>Vehicle</label><select id="sVeh"><option value="">— select —</option>${vehicleOptions()}</select></div>
+          <div class="field"><label>Vehicle</label><select id="sVeh"><option value="">— select —</option></select></div>
           <div class="field"><label>Part</label><select id="sPart"><option value="">— select vehicle —</option></select></div>
         </div>
-        <div class="row">
+        <div class="row" style="align-items:end">
           <div class="field"><label>Available</label><input id="sAvail" disabled></div>
           <div class="field"><label>Qty</label><input id="sQty" type="number" min="1" value="1"></div>
           <div class="field"><label>Unit Price</label><input id="sPrice" type="number" step="0.01"></div>
-          <div class="field"><label>Sale Value</label><input id="sVal" disabled></div>
+          <div class="field"><label>Line Value</label><input id="sVal" disabled></div>
+          <div class="field" style="flex:0 0 auto;min-width:auto"><label>&nbsp;</label><button class="ok" type="button" onclick="addSaleItem()">+ Add item</button></div>
         </div>
-        <div class="field"><label>Remarks</label><input id="sRem"></div>
+        <div id="saleItems"></div>
+        <div class="field" style="margin-top:12px"><label>Remarks</label><input id="sRem"></div>
         <button onclick="submitSale(this)">Save Sale</button>
       </div>
       <div class="panel">
@@ -461,19 +465,56 @@ async function viewSale(){
       </div>
     </div>`;
   $('#sDate').value = new Date().toISOString().slice(0,10);
+  _saleItems = [];
   await fetchStockList();
   $('#sVeh').innerHTML = '<option value="">— select —</option>'+stockVehicles().map(v=>`<option>${esc(v)}</option>`).join('');
   $('#sVeh').onchange = ()=>{
     $('#sPart').innerHTML = partOptionsFor($('#sVeh').value);
-    $('#sAvail').value=''; $('#sPrice').value=''; _salePart=null; updateInvoicePreview();
+    $('#sAvail').value=''; $('#sPrice').value=''; $('#sVal').value=''; _salePart=null;
   };
   $('#sPart').onchange = loadPartInfo;
   ['sQty','sPrice'].forEach(id=>$('#'+id).oninput=calcSaleVal);
   ['sCust','sVehNo'].forEach(id=>$('#'+id).oninput=updateInvoicePreview);
   $('#sDate').onchange=updateInvoicePreview;
+  // Customer type → show Vehicle No only for "Service Customer".
+  $('#sCustType').onchange = ()=>{
+    const svc = $('#sCustType').value==='Service Customer';
+    $('#vehNoField').style.display = svc ? '' : 'none';
+    if(!svc) $('#sVehNo').value='';
+    updateInvoicePreview();
+  };
+  renderSaleItems();
   await refreshInvoice();
   updateInvoicePreview();
   if($('#fBranch')) $('#fBranch').onchange = ()=>{ refreshInvoice(); };
+}
+// ── Multi-part cart ──
+function addSaleItem(){
+  if(!_salePart) return toast('Select a part first','err');
+  const qty=+$('#sQty').value||0, price=+$('#sPrice').value||0;
+  if(qty<1) return toast('Enter a quantity','err');
+  const avail=+$('#sAvail').value||0;
+  const ex=_saleItems.find(it=>it.partName===_salePart.part_name&&it.partNo===_salePart.part_no);
+  const already=ex?ex.qty:0;
+  if(qty+already>avail) return toast('Insufficient stock. Available '+avail+(already?', already added '+already:''),'err');
+  if(ex){ ex.qty+=qty; ex.unitPrice=price; ex.saleValue=ex.qty*price; }      // same part → merge qty
+  else _saleItems.push({ vehicle:_salePart.vehicle, partName:_salePart.part_name, partNo:_salePart.part_no, qty, unitPrice:price, saleValue:qty*price });
+  renderSaleItems(); updateInvoicePreview();
+  $('#sPart').value=''; $('#sQty').value=1; $('#sPrice').value=''; $('#sAvail').value=''; $('#sVal').value=''; _salePart=null;
+}
+function removeSaleItem(i){ _saleItems.splice(i,1); renderSaleItems(); updateInvoicePreview(); }
+function renderSaleItems(){
+  const box=$('#saleItems'); if(!box) return;
+  if(!_saleItems.length){ box.innerHTML='<p class="muted" style="margin:8px 0">No items yet — pick a part and click <b>+ Add item</b>. You can add several parts to one invoice.</p>'; return; }
+  const total=_saleItems.reduce((t,it)=>t+it.saleValue,0);
+  box.innerHTML=`<div class="tableWrap" style="max-height:none;margin-top:4px"><table>
+    <thead><tr><th>Part</th><th>Qty</th><th class="right">Rate</th><th class="right">Amount</th><th></th></tr></thead>
+    <tbody>${_saleItems.map((it,i)=>`<tr>
+      <td>${esc(it.partName)}${it.partNo&&it.partNo!=='—'?' <span class="muted">'+esc(it.partNo)+'</span>':''}</td>
+      <td>${it.qty}</td><td class="right">${fmtINR(it.unitPrice)}</td><td class="right">${fmtINR(it.saleValue)}</td>
+      <td class="right"><button class="sm danger" type="button" onclick="removeSaleItem(${i})">✕</button></td></tr>`).join('')}
+      <tr><td colspan="3" class="right"><b>Total</b></td><td class="right"><b>${fmtINR(total)}</b></td><td></td></tr>
+    </tbody></table></div>`;
 }
 async function refreshInvoice(){
   const r = await apiCall('GET','/sales/next-invoice?branch='+encodeURIComponent(curBranch()||USER.branch));
@@ -489,32 +530,41 @@ async function loadPartInfo(){
 }
 function calcSaleVal(){ $('#sVal').value = ((+$('#sQty').value||0)*(+$('#sPrice').value||0)).toFixed(2); updateInvoicePreview(); }
 async function submitSale(btn){
+  if(!_saleItems.length) return toast('Add at least one item to the sale','err');
+  const isService = $('#sCustType') && $('#sCustType').value==='Service Customer';
   const body = { saleDate:$('#sDate').value, branch:curBranch(),
-    customerName:$('#sCust').value.trim()||undefined, vehicleNo:$('#sVehNo').value.trim()||undefined,
-    vehicle:_salePart?_salePart.vehicle:$('#sVeh').value, partName:_salePart?_salePart.part_name:'',
-    partNo:_salePart?_salePart.part_no:undefined, qty:+$('#sQty').value,
-    unitPrice:+$('#sPrice').value, remarks:$('#sRem').value||undefined };
-  if(!body.partName) return toast('Select a part','err');
-  if(!body.qty||body.qty<1) return toast('Enter quantity','err');
+    customerName:$('#sCust').value.trim()||undefined,
+    vehicleNo: isService ? ($('#sVehNo').value.trim()||undefined) : undefined,
+    remarks:$('#sRem').value||undefined,
+    items:_saleItems.map(it=>({ partName:it.partName, partNo:it.partNo, qty:it.qty, unitPrice:it.unitPrice })) };
   btn.disabled=true;
-  const r = await apiCall('POST','/sales',body);
+  const r = await apiCall('POST','/sales/bulk',body);
   btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
-  _previewSale = r.data;
-  $('#invPreview').innerHTML = invoiceHTML(r.data, false);
-  toast('Sale saved · Invoice '+r.data.invoice_no+' — print or download on the right');
+  _previewSale = invoiceObjFromRows(r.data.invoiceNo, r.data.rows);
+  $('#invPreview').innerHTML = invoiceHTML(_previewSale, false);
+  toast('Sale saved · Invoice '+r.data.invoiceNo+' ('+r.data.rows.length+' item'+(r.data.rows.length>1?'s':'')+') — print or download on the right');
+  _saleItems=[]; renderSaleItems();
   $('#sQty').value=1; $('#sRem').value=''; $('#sCust').value=''; $('#sVehNo').value=''; _salePart=null;
   await refreshInvoice();
 }
+// Build a single invoice object (with line items) from saved sale rows.
+function invoiceObjFromRows(invoiceNo, rows){
+  const f = rows[0] || {};
+  return { invoice_no:invoiceNo, sale_date:f.sale_date, branch:f.branch, vehicle:f.vehicle,
+    customer_name:f.customer_name, vehicle_no:f.vehicle_no, staff_email:f.staff_email,
+    items: rows.map(r=>({ part_name:r.part_name, part_no:r.part_no, qty:r.qty, unit_price:r.unit_price, sale_value:r.sale_value })),
+    sale_value: rows.reduce((t,r)=>t+Number(r.sale_value||0),0) };
+}
 // ── Invoice preview / print ──
 function saleDraftFromForm(){
-  const qty=+$('#sQty').value||0, price=+$('#sPrice').value||0;
+  const items=_saleItems.map(it=>({ part_name:it.partName, part_no:it.partNo, qty:it.qty, unit_price:it.unitPrice, sale_value:it.saleValue }));
+  const isService = $('#sCustType') && $('#sCustType').value==='Service Customer';
   return {
     invoice_no: $('#sInv') ? ($('#sInv').value||'') : '', sale_date: $('#sDate').value, branch: curBranch(),
-    customer_name: $('#sCust').value.trim(), vehicle_no: $('#sVehNo').value.trim(),
-    vehicle: _salePart?_salePart.vehicle:$('#sVeh').value, part_name: _salePart?_salePart.part_name:'',
-    part_no: _salePart?_salePart.part_no:'',
-    qty, unit_price: price, sale_value: qty*price, staff_email: USER.email,
+    customer_name: $('#sCust').value.trim(), vehicle_no: isService ? $('#sVehNo').value.trim() : '',
+    vehicle: items.length?_saleItems[0].vehicle:'', items,
+    sale_value: items.reduce((t,i)=>t+Number(i.sale_value||0),0), staff_email: USER.email,
   };
 }
 function updateInvoicePreview(){
@@ -531,7 +581,8 @@ function printCurrentInvoice(){
   w.document.close(); w.focus(); setTimeout(()=>w.print(), 300);
 }
 function invoiceHTML(s, draft){
-  const rate=Number(CONFIG.gstRate)||0;
+  const items=(s.items&&s.items.length)?s.items:[{part_name:s.part_name,part_no:s.part_no,qty:s.qty,unit_price:s.unit_price,sale_value:s.sale_value}];
+  const rate=(CONFIG.gstEnabled===false?0:(Number(CONFIG.gstRate)||0));
   let taxable=Number(s.sale_value||0), gst=0, total=taxable;
   if(rate>0){ if((CONFIG.gstMode||'exclusive')==='inclusive'){ taxable=total/(1+rate/100); gst=total-taxable; } else { gst=taxable*rate/100; total=taxable+gst; } }
   const rs=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
@@ -548,7 +599,7 @@ function invoiceHTML(s, draft){
     <div style="display:flex;justify-content:space-between"><span>Vehicle No: ${esc(s.vehicle_no||'—')}</span><span>${esc(s.vehicle||'—')}</span></div>
     <table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:12px">
       <thead><tr style="background:#2563eb;color:#fff"><th style="text-align:left;padding:4px 6px">Item</th><th style="padding:4px 6px">Qty</th><th style="padding:4px 6px;text-align:right">Rate</th><th style="padding:4px 6px;text-align:right">Amount</th></tr></thead>
-      <tbody><tr><td style="padding:4px 6px">${esc(s.part_name||'—')}${s.part_no&&s.part_no!=='—'?'<br><span style="color:#94a3b8">'+esc(s.part_no)+'</span>':''}</td><td style="text-align:center">${s.qty||0}</td><td style="text-align:right">${rs(s.unit_price)}</td><td style="text-align:right">${rs(s.sale_value)}</td></tr></tbody>
+      <tbody>${items.map(it=>`<tr><td style="padding:4px 6px">${esc(it.part_name||'—')}${it.part_no&&it.part_no!=='—'?'<br><span style="color:#94a3b8">'+esc(it.part_no)+'</span>':''}</td><td style="text-align:center">${it.qty||0}</td><td style="text-align:right">${rs(it.unit_price)}</td><td style="text-align:right">${rs(it.sale_value)}</td></tr>`).join('')}</tbody>
     </table>
     <div style="margin-top:8px;margin-left:38%">
       ${row('Subtotal', rs(taxable))}
@@ -1116,13 +1167,32 @@ async function confirmDeleteUser(id,btn){
 /* ════════════════════ Settings ════════════════════ */
 async function viewSettings(){
   const m=$('#main');
-  m.innerHTML=`<h1>Settings</h1><p class="sub">Application configuration.</p><div id="setBody"></div>`;
+  m.innerHTML=`<h1>Settings</h1><p class="sub">Application configuration.</p><div id="gstBox"></div><div id="setBody"></div>`;
   const r=await apiCall('GET','/settings');
   if(!r.ok) return toast(r.msg,'err');
-  $('#setBody').innerHTML=`<div class="card" style="max-width:640px">`+r.data.map(s=>`
+  renderGstToggle(r.data);
+  $('#setBody').innerHTML=`<div class="card" style="max-width:640px"><h3 style="margin:0 0 12px;font-size:14px">All settings</h3>`+r.data.map(s=>`
     <div class="field"><label>${esc(s.key)} <span class="muted">— ${esc(s.description||'')}</span></label>
       <div style="display:flex;gap:8px"><input id="set_${esc(s.key)}" value="${esc(s.value)}">
       <button class="sm" onclick="saveSetting('${esc(s.key)}')">Save</button></div></div>`).join('')+`</div>`;
+}
+function renderGstToggle(rows){
+  const row=(rows||[]).find(s=>s.key==='GST_ENABLED');
+  const on = !row || String(row.value)!=='false';
+  CONFIG.gstEnabled = on;
+  const box=$('#gstBox'); if(!box) return;
+  box.innerHTML=`<div class="card" style="max-width:640px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div><div style="font-weight:700">GST on invoices <span class="pill ${on?'green':'gray'}">${on?'Active':'Inactive'}</span></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${on?'GST is applied on invoices &amp; PDFs using the GST_RATE below.':'Invoices show no GST (subtotal = total).'}</div></div>
+    <button class="${on?'danger':'ok'}" type="button" onclick="toggleGST(${on})">${on?'Deactivate GST':'Activate GST'}</button>
+  </div>`;
+}
+async function toggleGST(currentlyOn){
+  const r=await apiCall('PUT','/settings/GST_ENABLED',{value: currentlyOn?'false':'true'});
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  CONFIG.gstEnabled=!currentlyOn;
+  toast('GST '+(currentlyOn?'deactivated':'activated'));
+  const s=await apiCall('GET','/settings'); if(s.ok) renderGstToggle(s.data);
 }
 async function saveSetting(key){
   const r=await apiCall('PUT','/settings/'+encodeURIComponent(key),{value:$('#set_'+key).value});
@@ -1174,14 +1244,17 @@ function generateInvoicePDF(s){
   doc.text('Item', L+4, y); doc.text('Qty', R-150, y, {align:'right'});
   doc.text('Rate', R-80, y, {align:'right'}); doc.text('Amount', R-4, y, {align:'right'}); y+=18;
   doc.setTextColor(20); doc.setFont('helvetica','normal');
-  const item=(s.part_name||'')+(s.part_no&&s.part_no!=='—'?' ('+s.part_no+')':'');
-  doc.text(doc.splitTextToSize(item, R-L-170)[0], L+4, y);
-  doc.text(String(s.qty), R-150, y, {align:'right'});
-  doc.text(rs(s.unit_price), R-80, y, {align:'right'});
-  doc.text(rs(s.sale_value), R-4, y, {align:'right'}); y+=8;
-  doc.setDrawColor(200); doc.line(L,y,R,y); y+=15;
+  const items=(s.items&&s.items.length)?s.items:[{part_name:s.part_name,part_no:s.part_no,qty:s.qty,unit_price:s.unit_price,sale_value:s.sale_value}];
+  for(const it of items){
+    const item=(it.part_name||'')+(it.part_no&&it.part_no!=='—'?' ('+it.part_no+')':'');
+    doc.text(doc.splitTextToSize(item, R-L-170)[0], L+4, y);
+    doc.text(String(it.qty), R-150, y, {align:'right'});
+    doc.text(rs(it.unit_price), R-80, y, {align:'right'});
+    doc.text(rs(it.sale_value), R-4, y, {align:'right'}); y+=14;
+  }
+  y-=6; doc.setDrawColor(200); doc.line(L,y,R,y); y+=15;
   // ── totals (+GST) ──
-  const rate=Number(CONFIG.gstRate)||0;
+  const rate=(CONFIG.gstEnabled===false?0:(Number(CONFIG.gstRate)||0));
   let taxable=Number(s.sale_value||0), gst=0, total=taxable;
   if(rate>0){
     if((CONFIG.gstMode||'exclusive')==='inclusive'){ taxable=total/(1+rate/100); gst=total-taxable; }

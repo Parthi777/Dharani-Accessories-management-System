@@ -87,6 +87,74 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (r
   }
 });
 
+// POST /api/sales/bulk — save a multi-part sale: several line items under ONE invoice.
+// Stock is validated cumulatively (appended rows update the in-memory cache, so a part
+// listed twice is checked against the running balance).
+router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const branch = effBranch(req, b.branch);
+    const saleDate = b.saleDate || today();
+    const items = Array.isArray(b.items) ? b.items : [];
+    if (!branch) return res.status(400).json({ ok: false, msg: 'branch is required' });
+    if (!items.length) return res.status(400).json({ ok: false, msg: 'Add at least one item' });
+
+    // The same part can't repeat within one invoice — merge duplicates (sum qty).
+    const merged = [];
+    for (const it of items) {
+      const k = (it.partName || '') + '|' + (it.partNo || '');
+      const ex = merged.find(m => ((m.partName || '') + '|' + (m.partNo || '')) === k);
+      if (ex) { ex.qty = parseInt(ex.qty) + parseInt(it.qty); if (it.unitPrice != null) ex.unitPrice = it.unitPrice; }
+      else merged.push({ ...it });
+    }
+
+    const result = await store.runExclusive(async () => {
+      // One invoice number for the whole sale (auto per branch, or dedupe a supplied one).
+      let invoiceNo = (b.invoiceNo != null && String(b.invoiceNo).trim()) ? String(b.invoiceNo).trim() : '';
+      if (invoiceNo) {
+        if (store.find('sales', s => s.branch === branch && String(s.invoice_no) === invoiceNo))
+          throw { code: 409, msg: `Invoice ${invoiceNo} already used for this branch` };
+      } else {
+        invoiceNo = nextInvoiceFor(branch);
+      }
+
+      const rows = [];
+      for (const it of merged) {
+        const partName = it.partName;
+        const qty = parseInt(it.qty);
+        if (!partName || !qty || qty <= 0) throw { code: 400, msg: 'Each item needs a part and a positive qty' };
+        const part = store.findStock(partName, it.partNo);
+        if (!part) throw { code: 404, msg: `Part not found: ${partName}` };
+        const before = store.currentQty(partName, part.part_no, branch);
+        if (before < qty) throw { code: 400, msg: `Insufficient stock for ${partName}. Available: ${before}` };
+        const unitPrice = it.unitPrice != null ? Number(it.unitPrice) : Number(part.unit_price);
+        const costPrice = it.costPrice != null ? Number(it.costPrice) : Number(part.cost_price);
+        const id = store.nextTxnId('sales', 'SL', ddMMyy(saleDate));
+        const [saved] = await store.appendNoLock('sales', {
+          id, sale_date: saleDate, branch, staff_email: req.user.email, invoice_no: invoiceNo,
+          vehicle: part.vehicle, part_name: partName, part_no: part.part_no,
+          qty, unit_price: unitPrice, sale_value: unitPrice * qty,
+          cost_price: costPrice, gross_profit: (unitPrice - costPrice) * qty,
+          stock_before: before, stock_after: before - qty, remarks: it.remarks || b.remarks || '',
+          customer_name: b.customerName || '', vehicle_no: b.vehicleNo || '',
+        });
+        rows.push(saved);
+      }
+      return { invoiceNo, rows };
+    });
+
+    await store.audit(req.user, 'SALE', 'sales', result.invoiceNo,
+      { items: result.rows.length, invoice: result.invoiceNo,
+        saleValue: result.rows.reduce((t, r) => t + Number(r.sale_value || 0), 0) }, branch);
+    res.json({ ok: true, data: result });
+  } catch (e) {
+    if (e && typeof e.code === 'number' && e.code >= 400 && e.code <= 599)
+      return res.status(e.code).json({ ok: false, msg: e.msg });
+    console.error('bulk sale error', e);
+    res.status(500).json({ ok: false, msg: 'Server error' });
+  }
+});
+
 // PUT /api/sales/:id — Admin only: edit a sale (part & branch are not editable).
 // Recomputes value/profit and re-validates stock for the new quantity.
 router.put('/:id', requireRole('Admin'), async (req, res) => {

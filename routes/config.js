@@ -15,6 +15,7 @@ router.get('/', (req, res) => {
       currency: store.getSetting('CURRENCY', 'INR'),
       gstRate: Number(store.getSetting('GST_RATE', '0')) || 0,
       gstMode: store.getSetting('GST_MODE', 'exclusive'),
+      gstEnabled: store.getSetting('GST_ENABLED', 'true') !== 'false',
       gstin: store.getSetting('GSTIN', ''),
     },
   });
