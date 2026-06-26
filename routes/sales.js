@@ -37,6 +37,21 @@ router.get('/next-invoice', (req, res) => {
   res.json({ ok: true, data: { invoiceNo: nextInvoiceFor(effBranch(req, req.query.branch)) } });
 });
 
+// GET /api/sales/customers → distinct customers (name + vehicle no) seen in sales,
+// with counts, so the New Sale form can flag a returning customer / vehicle.
+router.get('/customers', (req, res) => {
+  const branch = effBranch(req, req.query.branch);
+  const byName = new Map(), byVeh = new Map();
+  for (const s of store.all('sales')) {
+    if (branch && branch !== 'ALL' && s.branch !== branch) continue;
+    const nm = String(s.customer_name || '').trim();
+    const vn = String(s.vehicle_no || '').trim();
+    if (nm) { const k = nm.toLowerCase(); const e = byName.get(k) || { name: nm, count: 0, last: '' }; e.count++; if (s.sale_date > e.last) e.last = s.sale_date; byName.set(k, e); }
+    if (vn) { const k = vn.toLowerCase().replace(/[\s-]/g, ''); const e = byVeh.get(k) || { vehicleNo: vn, count: 0, last: '' }; e.count++; if (s.sale_date > e.last) e.last = s.sale_date; byVeh.set(k, e); }
+  }
+  res.json({ ok: true, data: { names: [...byName.values()], vehicles: [...byVeh.values()] } });
+});
+
 // POST /api/sales — save a sale (validates stock, dedupes invoice)
 router.post('/', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (req, res) => {
   try {

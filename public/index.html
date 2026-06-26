@@ -414,7 +414,7 @@ function fmtCell(col,val){
 
 /* ════════════════════ New Sale ════════════════════ */
 function vehicleOptions(){ return Object.keys(VPMAP).sort().map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join(''); }
-let _previewSale=null, _salePart=null, _transferPart=null, STOCK=[], _saleItems=[], _transferItems=[];
+let _previewSale=null, _salePart=null, _transferPart=null, STOCK=[], _saleItems=[], _transferItems=[], _custInfo={names:[],vehicles:[]};
 async function fetchStockList(){ const r=await apiCall('GET','/stock?branch=ALL'); STOCK = r.ok ? r.data : []; return STOCK; }
 // Distinct vehicles present in the live stock catalogue.
 function stockVehicles(){ return [...new Set(STOCK.map(s=>s.vehicle))].filter(Boolean).sort(); }
@@ -439,6 +439,7 @@ async function viewSale(){
           <div class="field"><label>Customer Name</label><input id="sCust" placeholder="customer name"></div>
           <div class="field" id="vehNoField" style="display:none"><label>Vehicle No</label><input id="sVehNo" placeholder="e.g. TN-33-AB-1234"></div>
         </div>
+        <div id="custWarn" style="margin:-4px 0 8px"></div>
         <div style="border-top:1px solid var(--line);margin:4px 0 12px"></div>
         <div class="row">
           <div class="field"><label>Vehicle</label><select id="sVeh"><option value="">— select —</option></select></div>
@@ -474,14 +475,16 @@ async function viewSale(){
   };
   $('#sPart').onchange = loadPartInfo;
   ['sQty','sPrice'].forEach(id=>$('#'+id).oninput=calcSaleVal);
-  ['sCust','sVehNo'].forEach(id=>$('#'+id).oninput=updateInvoicePreview);
+  ['sCust','sVehNo'].forEach(id=>$('#'+id).oninput=()=>{ updateInvoicePreview(); checkDupCustomer(); });
   $('#sDate').onchange=updateInvoicePreview;
+  // Load known customers for the returning-customer alert.
+  apiCall('GET','/sales/customers?branch='+encodeURIComponent(curBranch()||USER.branch||'ALL')).then(r=>{ if(r.ok) _custInfo=r.data; });
   // Customer type → show Vehicle No only for "Service Customer".
   $('#sCustType').onchange = ()=>{
     const svc = $('#sCustType').value==='Service Customer';
     $('#vehNoField').style.display = svc ? '' : 'none';
     if(!svc) $('#sVehNo').value='';
-    updateInvoicePreview();
+    updateInvoicePreview(); checkDupCustomer();
   };
   renderSaleItems();
   await refreshInvoice();
@@ -555,6 +558,17 @@ function invoiceObjFromRows(invoiceNo, rows){
     customer_name:f.customer_name, vehicle_no:f.vehicle_no, staff_email:f.staff_email,
     items: rows.map(r=>({ part_name:r.part_name, part_no:r.part_no, qty:r.qty, unit_price:r.unit_price, sale_value:r.sale_value })),
     sale_value: rows.reduce((t,r)=>t+Number(r.sale_value||0),0) };
+}
+// Alert when the typed customer name / vehicle no matches a previous sale.
+function checkDupCustomer(){
+  const box=$('#custWarn'); if(!box) return;
+  const nm=$('#sCust')?$('#sCust').value.trim().toLowerCase():'';
+  const svc=$('#sCustType')&&$('#sCustType').value==='Service Customer';
+  const vn=(svc&&$('#sVehNo'))?$('#sVehNo').value.trim().toLowerCase().replace(/[\s-]/g,''):'';
+  const msgs=[];
+  if(vn){ const m=(_custInfo.vehicles||[]).find(v=>String(v.vehicleNo).toLowerCase().replace(/[\s-]/g,'')===vn); if(m) msgs.push('Vehicle '+esc(m.vehicleNo)+' · '+m.count+' prior sale'+(m.count>1?'s':'')+(m.last?' (last '+fmtDate(m.last)+')':'')); }
+  if(nm){ const m=(_custInfo.names||[]).find(n=>String(n.name).toLowerCase()===nm); if(m) msgs.push('Customer "'+esc(m.name)+'" · '+m.count+' prior sale'+(m.count>1?'s':'')); }
+  box.innerHTML = msgs.length?('<span class="pill amber">⚠ Returning customer — '+msgs.join(' · ')+'</span>'):'';
 }
 // ── Invoice preview / print ──
 function saleDraftFromForm(){
@@ -768,11 +782,26 @@ function openAddStock(){
     <datalist id="vehList">${vehicleOptions()}</datalist>
     <div class="row"><div class="field"><label>Part No</label><input id="asNo"></div>
       <div class="field"><label>Source</label><select id="asSrc"><option>DMS</option><option>Local</option><option>Import</option></select></div></div>
+    <div id="dupPartWarn" style="margin:-4px 0 10px"></div>
     <div class="row"><div class="field"><label>Selling Price</label><input id="asUP" type="number" value="0"></div>
       <div class="field"><label>Cost Price</label><input id="asCP" type="number" value="0"></div>
       <div class="field"><label>Init Qty</label><input id="asIQ" type="number" value="0"></div></div>
     <div class="field"><label>Notes</label><input id="asNotes"></div>
     <button onclick="submitStock(this)">Save Part</button>`);
+  const chk=()=>checkDupPart($('#asName').value,$('#asNo').value);
+  $('#asName').oninput=chk; $('#asNo').oninput=chk;
+}
+// Live alert when a part name (or exact name+no) already exists in the catalogue.
+function checkDupPart(name,no){
+  const box=$('#dupPartWarn'); if(!box) return;
+  name=String(name||'').trim().toLowerCase();
+  if(!name){ box.innerHTML=''; return; }
+  const list=(typeof _stockCache!=='undefined'&&_stockCache)?_stockCache:[];
+  const sameName=list.filter(s=>String(s.part_name||'').trim().toLowerCase()===name);
+  const exact=sameName.find(s=>String(s.part_no||'').trim().toLowerCase()===String(no||'').trim().toLowerCase());
+  if(exact) box.innerHTML='<span class="pill red">⚠ Exact duplicate — "'+esc(exact.part_name)+'" / part no "'+esc(exact.part_no)+'" already exists. Saving will be blocked.</span>';
+  else if(sameName.length) box.innerHTML='<span class="pill amber">⚠ A part named "'+esc(sameName[0].part_name)+'" already exists ('+sameName.length+' entr'+(sameName.length>1?'ies':'y')+', part no: '+sameName.map(s=>esc(s.part_no)).join(', ')+'). Add only if this is a different part.</span>';
+  else box.innerHTML='';
 }
 async function submitStock(btn){
   const body={vehicle:$('#asVeh').value.trim(),partName:$('#asName').value.trim(),partNo:$('#asNo').value.trim(),
@@ -891,10 +920,21 @@ function previewBulk(){
   _bulkRows=rows.map(r=>({partName:r.partName,qty:+r.qty,vehicle:r.vehicle,partNo:r.partNo,
     unitCost:r.unitPrice?+r.unitPrice:undefined,sellingPrice:r.sellingPrice?+r.sellingPrice:undefined,
     supplier:r.supplier,batchNo:r.batchNo}));
+  // Flag duplicate rows WITHIN the file (same part, qty, supplier, batch).
+  const seen={}, dupFlag=[];
+  _bulkRows.forEach((r,idx)=>{
+    const sig=[String(r.partName||'').trim().toLowerCase(),(r.partNo||'—'),r.qty,String(r.supplier||'').trim().toLowerCase(),String(r.batchNo||'').trim().toLowerCase()].join('|');
+    dupFlag[idx]=!!seen[sig]; seen[sig]=true;
+  });
+  const dupCount=dupFlag.filter(Boolean).length;
   const bad=_bulkRows.filter(r=>!r.partName||!r.qty||r.qty<1).length;
-  $('#bPreview').innerHTML=`<p>${_bulkRows.length} rows · ${bad?('<span style="color:var(--red)">'+bad+' invalid</span>'):'all valid'}</p>
-    <div class="tableWrap">${tableHTML(['Part','Vehicle','Part No','Qty','Unit Price','Selling Price','Supplier'],
-    _bulkRows.map(r=>[r.partName||'<span class="pill red">missing</span>',r.vehicle||'—',r.partNo||'—',r.qty||'—',r.unitCost??'—',r.sellingPrice??'—',r.supplier||'—']))}</div>`;
+  $('#bPreview').innerHTML=
+    `<p>${_bulkRows.length} rows · ${bad?('<span style="color:var(--red)">'+bad+' invalid</span> · '):''}`
+    +`${dupCount?('<span class="pill amber">'+dupCount+' duplicate row'+(dupCount>1?'s':'')+' in file</span>'):'<span class="pill green">no in-file duplicates</span>'}</p>`
+    +`${dupCount?'<p class="muted" style="margin:4px 0">Highlighted rows repeat earlier rows. Duplicates already in the system are also detected on upload and skipped unless you choose to include them.</p>':''}`
+    +`<div class="tableWrap">${tableHTML(['#','Part','Vehicle','Part No','Qty','Unit Price','Selling Price','Supplier','Status'],
+      _bulkRows.map((r,idx)=>[idx+1,r.partName||'<span class="pill red">missing</span>',r.vehicle||'—',r.partNo||'—',r.qty||'—',r.unitCost??'—',r.sellingPrice??'—',r.supplier||'—',
+        dupFlag[idx]?'<span class="pill amber">duplicate</span>':'<span class="pill green">new</span>']))}</div>`;
   $('#bSubmit').classList.remove('hidden');
 }
 function downloadSampleCSV(){
@@ -904,15 +944,39 @@ function downloadSampleCSV(){
   const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:'inward_sample.csv'});
   a.click();
 }
+let _lastDups=[];
 async function submitBulk(btn){
   if(!_bulkRows.length) return toast('Preview first','err');
   const rows=_bulkRows.map(r=>({...r,branch:curBranch(),inwardDate:$('#bDate').value}));
-  btn.disabled=true; const r=await apiCall('POST','/inward/bulk',rows); btn.disabled=false;
+  btn.disabled=true; const r=await apiCall('POST','/inward/bulk',{rows,force:false}); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
   if(r.vpmap) VPMAP=r.vpmap;
-  toast(`Uploaded ${r.data.saved} rows`+(r.data.errors.length?`, ${r.data.errors.length} skipped`:''));
-  $('#bText').value=''; $('#bPreview').innerHTML=''; $('#bSubmit').classList.add('hidden'); _bulkRows=[];
+  const dups=r.data.duplicates||[]; _lastDups=dups;
+  if(dups.length){
+    toast(`${r.data.saved} uploaded · ${dups.length} duplicate${dups.length>1?'s':''} skipped`,'err');
+    $('#bPreview').innerHTML=`<div class="card" style="border-left:4px solid var(--amber)">
+      <h3 style="margin:0 0 8px">⚠ ${dups.length} duplicate row${dups.length>1?'s':''} skipped</h3>
+      <p class="muted" style="margin:0 0 10px">These already exist in the system (same date, branch, part, qty, supplier &amp; batch) — likely a re-uploaded file. ${r.data.saved} new row${r.data.saved===1?' was':'s were'} uploaded.</p>
+      <div class="tableWrap">${tableHTML(['File Row','Part','Part No','Qty','Branch','Date'],dups.map(d=>[d.row,esc(d.partName),esc(d.partNo),d.qty,esc(d.branch),fmtDate(d.date)]))}</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="danger" onclick="forceBulk(this)">Upload duplicates anyway</button>
+        <button class="ghost" onclick="resetBulk()">Done</button>
+      </div></div>`;
+    return;
+  }
+  toast(`Uploaded ${r.data.saved} row${r.data.saved===1?'':'s'}`+(r.data.errors.length?`, ${r.data.errors.length} skipped`:''));
+  resetBulk();
 }
+async function forceBulk(btn){
+  if(!_lastDups.length) return resetBulk();
+  const rows=_lastDups.map(d=>({..._bulkRows[d.row-1],branch:curBranch(),inwardDate:$('#bDate').value}));
+  btn.disabled=true; const r=await apiCall('POST','/inward/bulk',{rows,force:true}); btn.disabled=false;
+  if(!r.ok) return toast(r.msg||'Failed','err');
+  if(r.vpmap) VPMAP=r.vpmap;
+  toast(`Uploaded ${r.data.saved} duplicate row${r.data.saved===1?'':'s'}`);
+  resetBulk();
+}
+function resetBulk(){ $('#bText').value=''; $('#bPreview').innerHTML=''; $('#bSubmit').classList.add('hidden'); _bulkRows=[]; _lastDups=[]; }
 
 /* ════════════════════ Stock Transfer ════════════════════ */
 async function viewTransfer(){

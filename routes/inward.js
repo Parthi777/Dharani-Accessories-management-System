@@ -69,6 +69,7 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (r
 // POST /api/inward/bulk — array of rows; auto-creates missing stock entries
 router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (req, res) => {
   const rowsIn = Array.isArray(req.body) ? req.body : (req.body && req.body.rows);
+  const force = !Array.isArray(req.body) && !!(req.body && req.body.force); // upload duplicates anyway
   if (!Array.isArray(rowsIn) || rowsIn.length === 0)
     return res.status(400).json({ ok: false, msg: 'Expected a non-empty array of inward rows' });
 
@@ -79,6 +80,15 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
       const inwardObjs = [];
       let stockMax = maxSeq('stock', 'STK');
       const inwCounters = {};
+
+      // Duplicate detection: an inward row is a duplicate when the same date, branch,
+      // part, qty, supplier and batch already exist (re-uploaded file) or repeat in
+      // this same upload. Duplicates are skipped unless `force` is set.
+      const duplicates = [];
+      const sigOf = (date, branch, partName, partNo, qty, supplier, batchNo) =>
+        [date, branch, String(partName).trim().toLowerCase(), (partNo || '—'), qty, String(supplier || '').trim().toLowerCase(), String(batchNo || '').trim().toLowerCase()].join('¦');
+      const existingSigs = new Set(store.all('inward').map(r => sigOf(r.inward_date, r.branch, r.part_name, r.part_no, r.qty, r.supplier, r.batch_no)));
+      const seenSigs = new Set();
 
       const ensure = (partName, vehicle, partNo, cost, selling) => {
         const k = store.partKey(partName, partNo);
@@ -107,6 +117,14 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
         const inwardDate = b.inwardDate || today();
         const cost = (b.unitCost != null && b.unitCost !== '') ? Number(b.unitCost) : null;
         const selling = (b.sellingPrice != null && b.sellingPrice !== '') ? Number(b.sellingPrice) : null;
+        if (!force) {
+          const sig = sigOf(inwardDate, branch, partName, b.partNo, qty, b.supplier, b.batchNo);
+          if (existingSigs.has(sig) || seenSigs.has(sig)) {
+            duplicates.push({ row: i + 1, partName, partNo: b.partNo || '—', qty, branch, date: inwardDate });
+            return;
+          }
+          seenSigs.add(sig);
+        }
         const part = ensure(partName, b.vehicle, b.partNo, cost, selling);
         const unitCost = cost != null ? cost : Number(part.cost_price);
         inwardObjs.push({
@@ -117,14 +135,14 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
         });
       });
 
-      if (errors.length && inwardObjs.length === 0) throw { code: 400, msg: 'No valid rows', errors };
+      if (errors.length && inwardObjs.length === 0 && duplicates.length === 0) throw { code: 400, msg: 'No valid rows', errors };
       if (newStock.length) await store.appendNoLock('stock', newStock);
       const saved = inwardObjs.length ? await store.appendNoLock('inward', inwardObjs) : [];
-      return { saved, errors };
+      return { saved, errors, duplicates };
     });
 
-    await store.audit(req.user, 'INWARD_BULK', 'inward', null, { saved: result.saved.length, errors: result.errors.length });
-    res.json({ ok: true, data: { saved: result.saved.length, errors: result.errors }, rows: result.saved, vpmap: store.buildVpmap() });
+    await store.audit(req.user, 'INWARD_BULK', 'inward', null, { saved: result.saved.length, errors: result.errors.length, duplicates: result.duplicates.length });
+    res.json({ ok: true, data: { saved: result.saved.length, errors: result.errors, duplicates: result.duplicates }, rows: result.saved, vpmap: store.buildVpmap() });
   } catch (e) {
     if (e && e.code) return res.status(e.code).json({ ok: false, msg: e.msg, errors: e.errors });
     console.error('bulk inward error', e);
