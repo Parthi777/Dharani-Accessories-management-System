@@ -844,7 +844,7 @@ async function loadPartInfo(){
   const id=$('#sPart').value; if(!id){ _salePart=null; $('#sAvail').value=''; updateInvoicePreview(); return; }
   const s=STOCK.find(x=>x.id===id); if(!s){ _salePart=null; return; }
   _salePart=s; $('#sPrice').value = s.unit_price;
-  const q=await apiCall('GET','/stock/qty/'+encodeURIComponent(s.part_name)+'?branch='+encodeURIComponent(curBranch()||USER.branch)+'&partNo='+encodeURIComponent(s.part_no||''));
+  const q=await apiCall('GET','/stock/qty/'+encodeURIComponent(s.part_name)+'?branch='+encodeURIComponent(curBranch()||USER.branch)+'&partNo='+encodeURIComponent(s.part_no||'')+'&vehicle='+encodeURIComponent(s.vehicle||''));
   if(q.ok) $('#sAvail').value = q.data.qty;
   calcSaleVal();
 }
@@ -857,7 +857,7 @@ async function submitSale(btn){
     vehicleNo: isService ? ($('#sVehNo').value.trim()||undefined) : undefined,
     chassisNo: isService ? undefined : ($('#sChassis').value.trim()||undefined),
     remarks:$('#sRem').value||undefined,
-    items:_saleItems.map(it=>({ partName:it.partName, partNo:it.partNo, qty:it.qty, unitPrice:it.unitPrice })) };
+    items:_saleItems.map(it=>({ partName:it.partName, partNo:it.partNo, vehicle:it.vehicle, qty:it.qty, unitPrice:it.unitPrice })) };
   btn.disabled=true;
   const r = await apiCall('POST','/sales/bulk',body);
   btn.disabled=false;
@@ -1059,9 +1059,8 @@ function editStock(id){
   const s=_stockCache.find(x=>x.id===id); if(!s) return;
   modal('Edit Part',`
     <div class="field"><label>Part Name (not editable — used across records)</label><input value="${esc(s.part_name)}" disabled></div>
-    <div class="row"><div class="field"><label>Vehicle</label><input id="esVeh" value="${esc(s.vehicle||'')}" list="esVehList"></div>
-      <div class="field"><label>Part No</label><input id="esNo" value="${esc(s.part_no||'')}"></div></div>
-    <datalist id="esVehList">${vehicleOptions()}</datalist>
+    <div class="row"><div class="field"><label>Vehicle (identity — not editable)</label><input value="${esc(s.vehicle||'')}" disabled></div>
+      <div class="field"><label>Part No (identity — not editable)</label><input value="${esc(s.part_no||'')}" disabled></div></div>
     <div class="row"><div class="field"><label>Supplier</label><input id="esSup" value="${esc(s.source||'')}" list="supList" placeholder="pick / add in Suppliers"></div>
       <div class="field"><label>Category</label><input id="esCat" value="${esc(s.category||'')}" list="catList" placeholder="e.g. Helmets"></div></div>
     <datalist id="catList">${(CONFIG.categories||[]).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
@@ -1073,7 +1072,7 @@ function editStock(id){
     <button onclick="submitEditStock('${esc(s.id)}',this)">Save Changes</button>`);
 }
 async function submitEditStock(id,btn){
-  const body={vehicle:$('#esVeh').value.trim(),partNo:$('#esNo').value.trim(),source:$('#esSup').value.trim(),
+  const body={source:$('#esSup').value.trim(),
     category:$('#esCat').value.trim(),
     unitPrice:+$('#esUP').value,costPrice:+$('#esCP').value,initQty:+$('#esIQ').value,notes:$('#esNotes').value};
   btn.disabled=true; const r=await apiCall('PUT','/stock/'+encodeURIComponent(id),body); btn.disabled=false;
@@ -1114,19 +1113,20 @@ function openAddStock(){
       <div class="field"><label>Init Qty</label><input id="asIQ" type="number" value="0"></div></div>
     <div class="field"><label>Notes</label><input id="asNotes"></div>
     <button onclick="submitStock(this)">Save Part</button>`);
-  const chk=()=>checkDupPart($('#asName').value,$('#asNo').value);
-  $('#asName').oninput=chk; $('#asNo').oninput=chk;
+  const chk=()=>checkDupPart($('#asName').value,$('#asNo').value,$('#asVeh').value);
+  $('#asName').oninput=chk; $('#asNo').oninput=chk; $('#asVeh').oninput=chk;
 }
-// Live alert when a part name (or exact name+no) already exists in the catalogue.
-function checkDupPart(name,no){
+// Live alert when a part (name + part no + vehicle) already exists in the catalogue.
+function checkDupPart(name,no,vehicle){
   const box=$('#dupPartWarn'); if(!box) return;
   name=String(name||'').trim().toLowerCase();
   if(!name){ box.innerHTML=''; return; }
+  const norm=v=>String(v||'').trim().toLowerCase();
   const list=(typeof _stockCache!=='undefined'&&_stockCache)?_stockCache:[];
-  const sameName=list.filter(s=>String(s.part_name||'').trim().toLowerCase()===name);
-  const exact=sameName.find(s=>String(s.part_no||'').trim().toLowerCase()===String(no||'').trim().toLowerCase());
-  if(exact) box.innerHTML='<span class="pill red">⚠ Exact duplicate — "'+esc(exact.part_name)+'" / part no "'+esc(exact.part_no)+'" already exists. Saving will be blocked.</span>';
-  else if(sameName.length) box.innerHTML='<span class="pill amber">⚠ A part named "'+esc(sameName[0].part_name)+'" already exists ('+sameName.length+' entr'+(sameName.length>1?'ies':'y')+', part no: '+sameName.map(s=>esc(s.part_no)).join(', ')+'). Add only if this is a different part.</span>';
+  const sameName=list.filter(s=>norm(s.part_name)===name);
+  const exact=sameName.find(s=>norm(s.part_no)===norm(no)&&norm(s.vehicle)===norm(vehicle));
+  if(exact) box.innerHTML='<span class="pill red">⚠ Exact duplicate — "'+esc(exact.part_name)+'" / part no "'+esc(exact.part_no)+'" / vehicle "'+esc(exact.vehicle)+'" already exists. Saving will be blocked.</span>';
+  else if(sameName.length) box.innerHTML='<span class="pill amber">⚠ A part named "'+esc(sameName[0].part_name)+'" already exists for '+sameName.length+' vehicle/part-no combo'+(sameName.length>1?'s':'')+'. Adding for a different vehicle is fine.</span>';
   else box.innerHTML='';
 }
 async function submitStock(btn){
@@ -1379,7 +1379,7 @@ async function loadTransferAvail(){
   const s=STOCK.find(x=>x.id===id);
   if(!s||!from){ $('#tAvail').value=''; _transferPart=null; return; }
   _transferPart=s;
-  const r=await apiCall('GET','/stock/qty/'+encodeURIComponent(s.part_name)+'?branch='+encodeURIComponent(from)+'&partNo='+encodeURIComponent(s.part_no||''));
+  const r=await apiCall('GET','/stock/qty/'+encodeURIComponent(s.part_name)+'?branch='+encodeURIComponent(from)+'&partNo='+encodeURIComponent(s.part_no||'')+'&vehicle='+encodeURIComponent(s.vehicle||''));
   if(r.ok) $('#tAvail').value=r.data.qty;
 }
 async function submitTransfer(btn){
@@ -1389,7 +1389,7 @@ async function submitTransfer(btn){
   if(!to) return toast('Select destination branch','err');
   if(from===to) return toast('Source and destination must differ','err');
   const body={ transferDate:$('#tDate').value, fromBranch:from, toBranch:to, remarks:$('#tRem').value||undefined,
-    items:_transferItems.map(it=>({ partName:it.partName, partNo:it.partNo, qty:it.qty })) };
+    items:_transferItems.map(it=>({ partName:it.partName, partNo:it.partNo, vehicle:it.vehicle, qty:it.qty })) };
   btn.disabled=true; const r=await apiCall('POST','/transfers/bulk',body); btn.disabled=false;
   if(!r.ok) return toast(r.msg||'Failed','err');
   toast('Transferred '+r.data.rows.length+' part'+(r.data.rows.length>1?'s':'')+' from '+from+' to '+to);

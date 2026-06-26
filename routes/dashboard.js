@@ -10,7 +10,7 @@ router.use(requireAuth);
 
 const n = v => Number(v || 0);
 const inRange = (d, from, to) => (!from || d >= from) && (!to || d <= to);
-const pk = (name, pno) => store.partKey(name, pno);
+const pk = (name, pno, veh) => store.partKey(name, pno, veh);
 
 // ── Scope: branch lock + Sales_Staff personal-sales filter ──────────────────
 function scope(req) {
@@ -24,7 +24,7 @@ function scope(req) {
 function buildPartMeta() {
   const m = new Map();
   for (const s of store.all('stock')) {
-    m.set(pk(s.part_name, s.part_no), {
+    m.set(pk(s.part_name, s.part_no, s.vehicle), {
       category: (s.category || '').trim() || 'Untagged',
       supplier: (s.source || '').trim() || 'Unassigned',
       cost_price: n(s.cost_price),
@@ -33,13 +33,13 @@ function buildPartMeta() {
   }
   return m;
 }
-const metaCat = (meta, s) => (meta.get(pk(s.part_name, s.part_no)) || {}).category || 'Untagged';
+const metaCat = (meta, s) => (meta.get(pk(s.part_name, s.part_no, s.vehicle)) || {}).category || 'Untagged';
 
 // Set of part keys belonging to `supplier` (the part's stock.source). null = no filter.
 function partsForSupplier(supplier) {
   if (!supplier || supplier === 'ALL') return null;
   const set = new Set();
-  for (const s of store.all('stock')) if ((s.source || '') === supplier) set.add(pk(s.part_name, s.part_no));
+  for (const s of store.all('stock')) if ((s.source || '') === supplier) set.add(pk(s.part_name, s.part_no, s.vehicle));
   return set;
 }
 
@@ -49,7 +49,7 @@ function filterSales(rows, { branch, mine, email }, meta, f, supParts) {
     if (branch && s.branch !== branch) return false;
     if (mine && s.staff_email !== email) return false;
     if (f.category && f.category !== 'ALL' && metaCat(meta, s) !== f.category) return false;
-    if (supParts && !supParts.has(pk(s.part_name, s.part_no))) return false;
+    if (supParts && !supParts.has(pk(s.part_name, s.part_no, s.vehicle))) return false;
     return true;
   });
 }
@@ -58,8 +58,8 @@ function filterSales(rows, { branch, mine, email }, meta, f, supParts) {
 function filterInward(rows, { branch }, meta, f, supParts) {
   return rows.filter(i => {
     if (branch && i.branch !== branch) return false;
-    if (f.category && f.category !== 'ALL' && ((meta.get(pk(i.part_name, i.part_no)) || {}).category || 'Untagged') !== f.category) return false;
-    if (supParts && !supParts.has(pk(i.part_name, i.part_no))) return false;
+    if (f.category && f.category !== 'ALL' && ((meta.get(pk(i.part_name, i.part_no, i.vehicle)) || {}).category || 'Untagged') !== f.category) return false;
+    if (supParts && !supParts.has(pk(i.part_name, i.part_no, i.vehicle))) return false;
     return true;
   });
 }
@@ -68,7 +68,7 @@ function filterInward(rows, { branch }, meta, f, supParts) {
 function filterStock(branch, meta, f, supParts) {
   return store.stockWithQty(branch).filter(s => {
     if (f.category && f.category !== 'ALL' && ((s.category || '').trim() || 'Untagged') !== f.category) return false;
-    if (supParts && !supParts.has(pk(s.part_name, s.part_no))) return false;
+    if (supParts && !supParts.has(pk(s.part_name, s.part_no, s.vehicle))) return false;
     return true;
   });
 }
@@ -97,7 +97,7 @@ function bucket(dateStr, gran) {
 function lastSaleByPartMap() {
   const m = new Map();
   for (const s of store.all('sales')) {
-    const k = pk(s.part_name, s.part_no);
+    const k = pk(s.part_name, s.part_no, s.vehicle);
     const prev = m.get(k);
     if (!prev || s.sale_date > prev) m.set(k, s.sale_date);
   }
@@ -106,7 +106,7 @@ function lastSaleByPartMap() {
 function lastInwardByPartMap() {
   const m = new Map();
   for (const i of store.all('inward')) {
-    const k = pk(i.part_name, i.part_no);
+    const k = pk(i.part_name, i.part_no, i.vehicle);
     const prev = m.get(k);
     if (!prev || i.inward_date > prev) m.set(k, i.inward_date);
   }
@@ -154,7 +154,7 @@ router.get('/', (req, res) => {
       gross_profit: sum(rangeSales, s => s.gross_profit),
       qty_sold: sum(rangeSales, s => s.qty),
       transactions: rangeSales.length,
-      dead_stock: stockRows.filter(s => { const l = lastSale.get(pk(s.part_name, s.part_no)); return !l || l < deadCutoff; }).length,
+      dead_stock: stockRows.filter(s => { const l = lastSale.get(pk(s.part_name, s.part_no, s.vehicle)); return !l || l < deadCutoff; }).length,
     };
 
     // ── Charts ────────────────────────────────────────────────────────────────
@@ -178,13 +178,13 @@ router.get('/', (req, res) => {
       for (const s of arr) { const k = keyFn(s); const e = m.get(k) || { value: 0, qty: 0 }; e.value += n(s.sale_value); e.qty += n(s.qty); m.set(k, e); } return m; })(rangeSales).entries()];
     const byCategory = aggKey(s => metaCat(meta, s)).map(([category, e]) => ({ category, ...e })).sort((a, b) => b.value - a.value);
     // 6. Sales by supplier (the part's stock.source)
-    const bySupplier = aggKey(s => (meta.get(pk(s.part_name, s.part_no)) || {}).supplier || 'Unassigned')
+    const bySupplier = aggKey(s => (meta.get(pk(s.part_name, s.part_no, s.vehicle)) || {}).supplier || 'Unassigned')
       .map(([supplier, e]) => ({ supplier, ...e })).sort((a, b) => b.value - a.value);
 
     // 5. Top 10 selling parts (qty + value)
     const partAgg = new Map();
     for (const s of rangeSales) {
-      const k = pk(s.part_name, s.part_no);
+      const k = pk(s.part_name, s.part_no, s.vehicle);
       const e = partAgg.get(k) || { part: s.part_name, pno: s.part_no, qty: 0, value: 0 };
       e.qty += n(s.qty); e.value += n(s.sale_value); partAgg.set(k, e);
     }
@@ -214,7 +214,7 @@ router.get('/', (req, res) => {
     const stockAging = ageBuckets.map(([label]) => ({ bucket: label, value: 0 }));
     for (const s of stockRows) {
       if (n(s.current_qty) <= 0) continue;
-      const li = lastInward.get(pk(s.part_name, s.part_no));
+      const li = lastInward.get(pk(s.part_name, s.part_no, s.vehicle));
       const age = li ? Math.floor((Date.now() - new Date(li + 'T00:00:00')) / 86400000) : 999;
       const bi = ageBuckets.findIndex(([, lo, hi]) => age >= lo && age <= hi);
       stockAging[bi < 0 ? 3 : bi].value += n(s.current_qty) * n(s.cost_price);
@@ -252,8 +252,8 @@ router.get('/', (req, res) => {
     const lowList = stockRows.filter(s => n(s.current_qty) <= lowThr && n(s.current_qty) > 0)
       .sort((a, b) => n(a.current_qty) - n(b.current_qty)).map(s => ({ part_name: s.part_name, qty: s.current_qty }));
     const outList = stockRows.filter(s => n(s.current_qty) <= 0).map(s => ({ part_name: s.part_name, qty: s.current_qty }));
-    const deadList = stockRows.filter(s => { const l = lastSale.get(pk(s.part_name, s.part_no)); return !l || l < deadCutoff; })
-      .map(s => ({ part_name: s.part_name, last_sale: lastSale.get(pk(s.part_name, s.part_no)) || '' }));
+    const deadList = stockRows.filter(s => { const l = lastSale.get(pk(s.part_name, s.part_no, s.vehicle)); return !l || l < deadCutoff; })
+      .map(s => ({ part_name: s.part_name, last_sale: lastSale.get(pk(s.part_name, s.part_no, s.vehicle)) || '' }));
     const dayTotals = [...groupSum(rangeSales, s => s.sale_date, s => s.sale_value).entries()];
     const avgDay = dayTotals.length ? sum(dayTotals, d => d[1]) / dayTotals.length : 0;
     const spikes = dayTotals.filter(([, v]) => avgDay > 0 && v > 2 * avgDay)
@@ -328,7 +328,7 @@ router.get('/drill/:type', (req, res) => {
         rows = [...m.values()].sort((a, b) => b.sale_value - a.sale_value); break;
       }
       case 'category': rows = ranged().filter(s => metaCat(meta, s) === key).sort(byDateDesc).map(sel); break;
-      case 'supplier_sales': rows = ranged().filter(s => ((meta.get(pk(s.part_name, s.part_no)) || {}).supplier || 'Unassigned') === key).sort(byDateDesc).map(sel); break;
+      case 'supplier_sales': rows = ranged().filter(s => ((meta.get(pk(s.part_name, s.part_no, s.vehicle)) || {}).supplier || 'Unassigned') === key).sort(byDateDesc).map(sel); break;
       case 'staff': rows = ranged().filter(s => (s.staff_email || '—') === key).sort(byDateDesc).map(sel); break;
       case 'month': rows = ranged().filter(s => s.sale_date.slice(0, 7) === key).sort(byDateDesc).map(sel); break;
       case 'top_part': rows = ranged().filter(s => s.part_name === key && (!pno || s.part_no === pno)).sort(byDateDesc).map(sel); break;
@@ -345,7 +345,7 @@ router.get('/drill/:type', (req, res) => {
         const [lo, hi] = rangeMap[key] || [0, Infinity];
         rows = stockRows().filter(s => {
           if (n(s.qty) <= 0) return false;
-          const li = lastInward.get(pk(s.part_name, s.part_no));
+          const li = lastInward.get(pk(s.part_name, s.part_no, s.vehicle));
           const age = li ? Math.floor((Date.now() - new Date(li + 'T00:00:00')) / 86400000) : 999;
           return age >= lo && age <= hi;
         }).sort((a, b) => b.value - a.value); break;
@@ -361,7 +361,7 @@ router.get('/drill/:type', (req, res) => {
       case 'dead_stock': {
         const lastSale = lastSaleByPartMap();
         const cutoff = dateDaysAgo(deadDays);
-        rows = stockRows().map(s => ({ ...s, last_sale: lastSale.get(pk(s.part_name, s.part_no)) || '' }))
+        rows = stockRows().map(s => ({ ...s, last_sale: lastSale.get(pk(s.part_name, s.part_no, s.vehicle)) || '' }))
           .filter(s => !s.last_sale || s.last_sale < cutoff).sort((a, b) => (a.last_sale || '').localeCompare(b.last_sale || '')); break;
       }
       case 'active_branches':

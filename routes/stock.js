@@ -24,7 +24,7 @@ router.get('/vpmap', (req, res) => {
 
 // GET /api/stock/qty/:partName?branch=&partNo= → single current qty
 router.get('/qty/:partName', (req, res) => {
-  const qty = store.currentQty(req.params.partName, req.query.partNo, effBranch(req));
+  const qty = store.currentQty(req.params.partName, req.query.partNo, req.query.vehicle, effBranch(req));
   if (qty === null) return res.status(404).json({ ok: false, msg: 'Part not found' });
   res.json({ ok: true, data: { partName: req.params.partName, partNo: req.query.partNo || '', qty } });
 });
@@ -34,9 +34,9 @@ router.post('/', requireRole('Admin'), async (req, res) => {
   try {
     const { vehicle, partName, partNo, source, category, unitPrice, costPrice, initQty, notes } = req.body || {};
     if (!vehicle || !partName) return res.status(400).json({ ok: false, msg: 'vehicle and partName are required' });
-    // Same name is allowed if the part number differs; only the exact (name + part no) pair must be unique.
-    if (store.findStock(partName, partNo))
-      return res.status(409).json({ ok: false, msg: 'A part with this name and part number already exists' });
+    // Identity = name + part number + vehicle; the same name on a different vehicle/part-no is a different item.
+    if (store.findStock(partName, partNo, vehicle))
+      return res.status(409).json({ ok: false, msg: 'A part with this name, part number and vehicle already exists' });
 
     const id = store.nextSeqId('stock', 'id', 'STK', 4);
     const row = await store.insert('stock', {
@@ -88,8 +88,8 @@ router.delete('/:id', requireRole('Admin'), async (req, res) => {
     const s = store.find('stock', x => x.id === req.params.id);
     if (!s) return res.status(404).json({ ok: false, msg: 'Part not found' });
     const name = s.part_name;
-    const key = store.partKey(s.part_name, s.part_no);   // only THIS part (name + part no)
-    const sameItem = r => store.partKey(r.part_name, r.part_no) === key;
+    const key = store.partKey(s.part_name, s.part_no, s.vehicle);   // only THIS part (name + part no + vehicle)
+    const sameItem = r => store.partKey(r.part_name, r.part_no, r.vehicle) === key;
     const purgeSales = req.query.purgeSales === '1' || req.query.purgeSales === 'true';
 
     const removed = {};

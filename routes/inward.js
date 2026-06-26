@@ -50,7 +50,7 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (r
     const selling = priceOf(b.sellingPrice); // retail price
 
     const row = await store.runExclusive(async () => {
-      let part = store.findStock(partName, b.partNo);
+      let part = store.findStock(partName, b.partNo, b.vehicle);
       if (!part) {
         const id = store.nextSeqId('stock', 'id', 'STK', 4);
         [part] = await store.appendNoLock('stock', {
@@ -96,14 +96,14 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
       // part, qty, supplier and batch already exist (re-uploaded file) or repeat in
       // this same upload. Duplicates are skipped unless `force` is set.
       const duplicates = [];
-      const sigOf = (date, branch, partName, partNo, qty, supplier, batchNo) =>
-        [date, branch, String(partName).trim().toLowerCase(), (partNo || '—'), qty, String(supplier || '').trim().toLowerCase(), String(batchNo || '').trim().toLowerCase()].join('¦');
-      const existingSigs = new Set(store.all('inward').map(r => sigOf(r.inward_date, r.branch, r.part_name, r.part_no, r.qty, r.supplier, r.batch_no)));
+      const sigOf = (date, branch, partName, partNo, vehicle, qty, supplier, batchNo) =>
+        [date, branch, String(partName).trim().toLowerCase(), (partNo || '—'), String(vehicle || '').trim().toLowerCase(), qty, String(supplier || '').trim().toLowerCase(), String(batchNo || '').trim().toLowerCase()].join('¦');
+      const existingSigs = new Set(store.all('inward').map(r => sigOf(r.inward_date, r.branch, r.part_name, r.part_no, r.vehicle, r.qty, r.supplier, r.batch_no)));
       const seenSigs = new Set();
 
       const ensure = (partName, vehicle, partNo, cost, selling) => {
-        const k = store.partKey(partName, partNo);
-        let p = store.findStock(partName, partNo) || newStock.find(s => store.partKey(s.part_name, s.part_no) === k);
+        const k = store.partKey(partName, partNo, vehicle);
+        let p = store.findStock(partName, partNo, vehicle) || newStock.find(s => store.partKey(s.part_name, s.part_no, s.vehicle) === k);
         if (p) return p;
         p = { id: 'STK' + pad(++stockMax, 4), vehicle: vehicle || 'Unassigned', part_name: partName,
               part_no: partNo || '—', source: '',
@@ -129,7 +129,7 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
         const cost = priceOf(b.unitCost);
         const selling = priceOf(b.sellingPrice);
         if (!force) {
-          const sig = sigOf(inwardDate, branch, partName, b.partNo, qty, b.supplier, b.batchNo);
+          const sig = sigOf(inwardDate, branch, partName, b.partNo, b.vehicle, qty, b.supplier, b.batchNo);
           if (existingSigs.has(sig) || seenSigs.has(sig)) {
             duplicates.push({ row: i + 1, partName, partNo: b.partNo || '—', qty, branch, date: inwardDate });
             return;

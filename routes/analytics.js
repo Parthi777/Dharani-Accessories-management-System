@@ -33,10 +33,10 @@ router.get('/', (req, res) => {
     const mine = req.user.role === 'Sales_Staff';      // personal-sales scope
     const { from, to, vehicle } = req.query;
 
-    const pk = (name, no) => store.partKey(name, no);
-    const stockBy = new Map(store.all('stock').map(s => [pk(s.part_name, s.part_no),
+    const pk = (name, no, veh) => store.partKey(name, no, veh);
+    const stockBy = new Map(store.all('stock').map(s => [pk(s.part_name, s.part_no, s.vehicle),
       { supplier: (s.source || '').trim() || 'Unassigned', category: (s.category || '').trim() || 'Untagged' }]));
-    const tag = (s, field) => (stockBy.get(pk(s.part_name, s.part_no)) || {})[field];
+    const tag = (s, field) => (stockBy.get(pk(s.part_name, s.part_no, s.vehicle)) || {})[field];
 
     const rows = store.all('sales').filter(s =>
       (!branch || branch === 'ALL' || s.branch === branch) &&

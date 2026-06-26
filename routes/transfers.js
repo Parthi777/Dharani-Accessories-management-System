@@ -43,9 +43,9 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (r
     if (!names.has(toBranch)) return res.status(400).json({ ok: false, msg: 'Unknown destination branch' });
 
     const row = await store.runExclusive(async () => {
-      const part = store.findStock(partName, b.partNo);
+      const part = store.findStock(partName, b.partNo, b.vehicle);
       if (!part) throw { code: 404, msg: 'Part not found in catalogue' };
-      const avail = store.currentQty(partName, part.part_no, fromBranch);
+      const avail = store.currentQty(partName, part.part_no, part.vehicle, fromBranch);
       if (avail < qty) throw { code: 400, msg: `Insufficient stock in ${fromBranch}. Available: ${avail}` };
       const id = store.nextTxnId('transfers', 'TR', ddMMyy(date));
       const [saved] = await store.appendNoLock('transfers', {
@@ -84,8 +84,8 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
 
     const merged = [];
     for (const it of items) {
-      const k = (it.partName || '') + '|' + (it.partNo || '');
-      const ex = merged.find(m => ((m.partName || '') + '|' + (m.partNo || '')) === k);
+      const k = (it.partName || '') + '|' + (it.partNo || '') + '|' + (it.vehicle || '');
+      const ex = merged.find(m => ((m.partName || '') + '|' + (m.partNo || '') + '|' + (m.vehicle || '')) === k);
       if (ex) ex.qty = parseInt(ex.qty) + parseInt(it.qty);
       else merged.push({ ...it });
     }
@@ -96,9 +96,9 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
         const partName = it.partName;
         const qty = parseInt(it.qty);
         if (!partName || !qty || qty <= 0) throw { code: 400, msg: 'Each item needs a part and a positive qty' };
-        const part = store.findStock(partName, it.partNo);
+        const part = store.findStock(partName, it.partNo, it.vehicle);
         if (!part) throw { code: 404, msg: `Part not found: ${partName}` };
-        const avail = store.currentQty(partName, part.part_no, fromBranch);
+        const avail = store.currentQty(partName, part.part_no, part.vehicle, fromBranch);
         if (avail < qty) throw { code: 400, msg: `Insufficient stock in ${fromBranch} for ${partName}. Available: ${avail}` };
         const id = store.nextTxnId('transfers', 'TR', ddMMyy(date));
         const [saved] = await store.appendNoLock('transfers', {

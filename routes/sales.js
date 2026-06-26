@@ -64,7 +64,7 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (r
       return res.status(400).json({ ok: false, msg: 'branch, partName and a positive qty are required' });
 
     const row = await store.runExclusive(async () => {
-      const part = store.findStock(partName, b.partNo);
+      const part = store.findStock(partName, b.partNo, b.vehicle);
       if (!part) throw { code: 404, msg: 'Part not found in catalogue' };
 
       // Invoice number: auto-generate per branch when not supplied; dedupe if one is.
@@ -76,7 +76,7 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), async (r
         invoiceNo = nextInvoiceFor(branch);
       }
 
-      const before = store.currentQty(partName, part.part_no, branch);
+      const before = store.currentQty(partName, part.part_no, part.vehicle, branch);
       if (before < qty) throw { code: 400, msg: `Insufficient stock. Available: ${before}` };
 
       const unitPrice = b.unitPrice != null ? Number(b.unitPrice) : Number(part.unit_price);
@@ -117,8 +117,8 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), asyn
     // The same part can't repeat within one invoice — merge duplicates (sum qty).
     const merged = [];
     for (const it of items) {
-      const k = (it.partName || '') + '|' + (it.partNo || '');
-      const ex = merged.find(m => ((m.partName || '') + '|' + (m.partNo || '')) === k);
+      const k = (it.partName || '') + '|' + (it.partNo || '') + '|' + (it.vehicle || '');
+      const ex = merged.find(m => ((m.partName || '') + '|' + (m.partNo || '') + '|' + (m.vehicle || '')) === k);
       if (ex) { ex.qty = parseInt(ex.qty) + parseInt(it.qty); if (it.unitPrice != null) ex.unitPrice = it.unitPrice; }
       else merged.push({ ...it });
     }
@@ -138,9 +138,9 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Sales_Staff'), asyn
         const partName = it.partName;
         const qty = parseInt(it.qty);
         if (!partName || !qty || qty <= 0) throw { code: 400, msg: 'Each item needs a part and a positive qty' };
-        const part = store.findStock(partName, it.partNo);
+        const part = store.findStock(partName, it.partNo, it.vehicle);
         if (!part) throw { code: 404, msg: `Part not found: ${partName}` };
-        const before = store.currentQty(partName, part.part_no, branch);
+        const before = store.currentQty(partName, part.part_no, part.vehicle, branch);
         if (before < qty) throw { code: 400, msg: `Insufficient stock for ${partName}. Available: ${before}` };
         const unitPrice = it.unitPrice != null ? Number(it.unitPrice) : Number(part.unit_price);
         const costPrice = it.costPrice != null ? Number(it.costPrice) : Number(part.cost_price);
@@ -190,7 +190,7 @@ router.put('/:id', requireRole('Admin'), async (req, res) => {
         throw { code: 409, msg: `Invoice ${invoiceNo} already used for this branch` };
 
       // Available if THIS sale didn't exist (add its current qty back).
-      const cur = store.currentQty(sale.part_name, sale.part_no, branch);
+      const cur = store.currentQty(sale.part_name, sale.part_no, sale.vehicle, branch);
       const availWithoutThis = cur == null ? Infinity : cur + Number(sale.qty);
       if (qty > availWithoutThis) throw { code: 400, msg: `Insufficient stock. Available: ${availWithoutThis}` };
 
