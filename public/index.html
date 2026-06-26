@@ -1221,6 +1221,12 @@ function readExcel(f){
   rd.readAsArrayBuffer(f);
 }
 let _bulkRows=[];
+// Tolerant numeric parsing: strips ₹/$, thousands commas, spaces and stray text
+// so "₹1,250", "1,200", "10 pcs" become 1250 / 1200 / 10 instead of NaN.
+function cleanNum(v){ if(v==null) return NaN; if(typeof v==='number') return v;
+  const s=String(v).replace(/[₹$,\s]/g,'').replace(/[^0-9.\-]/g,''); return (s===''||s==='-')?NaN:Number(s); }
+const optNum=v=>{ if(v==null||String(v).trim()==='') return undefined; const n=cleanNum(v); return Number.isFinite(n)?n:undefined; };
+const validBulkRow=r=>!!r.partName && Number.isFinite(r.qty) && r.qty>=1;
 function parseCSV(text){
   text=String(text||'').replace(/^﻿/,'');            // strip BOM
   const rows=[]; let row=[],cur='',inQ=false;
@@ -1240,8 +1246,8 @@ function parseCSV(text){
 function previewBulk(){
   const rows=parseCSV($('#bText').value);
   if(!rows.length){ $('#bPreview').innerHTML='<p class="muted">Nothing to preview.</p>'; $('#bSubmit').classList.add('hidden'); return; }
-  _bulkRows=rows.map(r=>({partName:r.partName,qty:+r.qty,vehicle:r.vehicle,partNo:r.partNo,
-    unitCost:r.unitPrice?+r.unitPrice:undefined,sellingPrice:r.sellingPrice?+r.sellingPrice:undefined,
+  _bulkRows=rows.map(r=>({partName:r.partName,qty:cleanNum(r.qty),vehicle:r.vehicle,partNo:r.partNo,
+    unitCost:optNum(r.unitPrice),sellingPrice:optNum(r.sellingPrice),
     supplier:r.supplier,batchNo:r.batchNo}));
   // Flag duplicate rows WITHIN the file (same part, qty, supplier, batch).
   const seen={}, dupFlag=[];
@@ -1250,14 +1256,18 @@ function previewBulk(){
     dupFlag[idx]=!!seen[sig]; seen[sig]=true;
   });
   const dupCount=dupFlag.filter(Boolean).length;
-  const bad=_bulkRows.filter(r=>!r.partName||!r.qty||r.qty<1).length;
+  const bad=_bulkRows.filter(r=>!validBulkRow(r)).length;
+  const qVal=r=>Number.isFinite(r.qty)?r.qty:'<span class="pill red">—</span>';
+  const status=(r,idx)=> !validBulkRow(r) ? '<span class="pill red">invalid</span>'
+    : (dupFlag[idx]?'<span class="pill amber">duplicate</span>':'<span class="pill green">new</span>');
   $('#bPreview').innerHTML=
-    `<p>${_bulkRows.length} rows · ${bad?('<span style="color:var(--red)">'+bad+' invalid</span> · '):''}`
+    `<p>${_bulkRows.length} rows · ${bad?('<span class="pill red">'+bad+' invalid (won’t upload)</span> · '):''}`
     +`${dupCount?('<span class="pill amber">'+dupCount+' duplicate row'+(dupCount>1?'s':'')+' in file</span>'):'<span class="pill green">no in-file duplicates</span>'}</p>`
+    +`${bad?'<p class="muted" style="margin:4px 0">Invalid rows are missing a part name or a valid quantity — fix them in your file and re-preview, or they will be skipped.</p>':''}`
     +`${dupCount?'<p class="muted" style="margin:4px 0">Highlighted rows repeat earlier rows. Duplicates already in the system are also detected on upload and skipped unless you choose to include them.</p>':''}`
     +`<div class="tableWrap">${tableHTML(['#','Part','Vehicle','Part No','Qty','Unit Price','Selling Price','Supplier','Status'],
-      _bulkRows.map((r,idx)=>[idx+1,r.partName||'<span class="pill red">missing</span>',r.vehicle||'—',r.partNo||'—',r.qty||'—',r.unitCost??'—',r.sellingPrice??'—',r.supplier||'—',
-        dupFlag[idx]?'<span class="pill amber">duplicate</span>':'<span class="pill green">new</span>']))}</div>`;
+      _bulkRows.map((r,idx)=>[idx+1,r.partName||'<span class="pill red">missing</span>',r.vehicle||'—',r.partNo||'—',qVal(r),r.unitCost??'—',r.sellingPrice??'—',r.supplier||'—',
+        status(r,idx)]))}</div>`;
   $('#bSubmit').classList.remove('hidden');
 }
 function downloadSampleCSV(){

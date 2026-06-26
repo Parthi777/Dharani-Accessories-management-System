@@ -9,6 +9,17 @@ router.use(requireAuth);
 
 const pad = (n, w) => String(n).padStart(w, '0');
 
+// Tolerant numeric parsing for uploaded data: strips currency symbols, thousands
+// separators, spaces and stray text (e.g. "₹1,250", "10 pcs", "1,200" → 1250/10/1200).
+const cleanNum = v => {
+  if (v == null) return NaN;
+  if (typeof v === 'number') return v;
+  const s = String(v).replace(/[₹$,\s]/g, '').replace(/[^0-9.\-]/g, '');
+  return s === '' || s === '-' ? NaN : Number(s);
+};
+const qtyOf = v => { const n = cleanNum(v); return Number.isFinite(n) ? Math.trunc(n) : NaN; };
+const priceOf = v => { if (v == null || v === '') return null; const n = cleanNum(v); return Number.isFinite(n) ? n : null; };
+
 function effBranch(req, fallback) {
   if (req.user.role !== 'Admin' && req.user.branch && req.user.branch !== 'ALL') return req.user.branch;
   return fallback || req.user.branch || null;
@@ -31,12 +42,12 @@ router.post('/', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), async (r
     const branch = effBranch(req, b.branch);
     const inwardDate = b.inwardDate || today();
     const partName = b.partName;
-    const qty = parseInt(b.qty);
-    if (!branch || !partName || !qty || qty <= 0)
+    const qty = qtyOf(b.qty);
+    if (!branch || !partName || !Number.isFinite(qty) || qty <= 0)
       return res.status(400).json({ ok: false, msg: 'branch, partName and a positive qty are required' });
 
-    const cost = (b.unitCost != null && b.unitCost !== '') ? Number(b.unitCost) : null;        // purchase price
-    const selling = (b.sellingPrice != null && b.sellingPrice !== '') ? Number(b.sellingPrice) : null; // retail price
+    const cost = priceOf(b.unitCost);        // purchase price
+    const selling = priceOf(b.sellingPrice); // retail price
 
     const row = await store.runExclusive(async () => {
       let part = store.findStock(partName, b.partNo);
@@ -109,14 +120,14 @@ router.post('/bulk', requireRole('Admin', 'Branch_Manager', 'Store_Staff'), asyn
       rowsIn.forEach((b, i) => {
         const branch = effBranch(req, b.branch);
         const partName = b.partName;
-        const qty = parseInt(b.qty);
-        if (!branch || !partName || !qty || qty <= 0) {
+        const qty = qtyOf(b.qty);
+        if (!branch || !partName || !Number.isFinite(qty) || qty <= 0) {
           errors.push({ row: i + 1, msg: 'branch, partName and positive qty required' });
           return;
         }
         const inwardDate = b.inwardDate || today();
-        const cost = (b.unitCost != null && b.unitCost !== '') ? Number(b.unitCost) : null;
-        const selling = (b.sellingPrice != null && b.sellingPrice !== '') ? Number(b.sellingPrice) : null;
+        const cost = priceOf(b.unitCost);
+        const selling = priceOf(b.sellingPrice);
         if (!force) {
           const sig = sigOf(inwardDate, branch, partName, b.partNo, qty, b.supplier, b.batchNo);
           if (existingSigs.has(sig) || seenSigs.has(sig)) {
