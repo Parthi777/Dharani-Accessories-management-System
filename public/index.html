@@ -45,6 +45,7 @@
   th{color:var(--muted);font-weight:600;position:sticky;top:0;background:rgba(248,250,252,.92);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);text-transform:uppercase;font-size:11px;letter-spacing:.04em}
   tbody tr:last-child td{border-bottom:none}
   tbody tr:hover{background:rgba(37,99,235,.06)}
+  tbody tr.dim td{opacity:.5}
   .tableWrap{overflow:auto;max-height:60vh;border:1px solid var(--glass-border);border-radius:var(--radius);background:var(--panel);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);box-shadow:var(--shadow)}
   .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600}
   .pill.green{background:#dcfce7;color:#15803d} .pill.red{background:#fee2e2;color:#b91c1c}
@@ -1007,9 +1008,10 @@ async function confirmDeleteSale(id,btn){
 async function viewStock(){
   const m=$('#main');
   const canAdd = USER.role==='Admin';
-  m.innerHTML=`<h1>Stock</h1><p class="sub">Quantities are computed live (init + inward − sales). Pick a branch to see only what's available there.</p>
+  m.innerHTML=`<h1>Stock</h1><p class="sub">Quantities are computed live (init + inward − sales). Pick a branch to see its quantities; out-of-stock parts are greyed out.</p>
     <div class="filters"><div class="field"><label>Branch</label>${branchPicker(true)}</div>
       <div class="field"><label>Search</label><input id="stkSearch" placeholder="part / vehicle"></div>
+      <label class="field" style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="stkAvail" style="width:auto"> Available only</label>
       <button onclick="loadStock()">Apply</button>
       ${expMenu('doListExport','stock')}
       ${canAdd?'<button class="danger" id="delSelBtn" onclick="deleteSelectedStock()" disabled>Delete selected</button>':''}
@@ -1017,6 +1019,7 @@ async function viewStock(){
     <div id="stockTbl"></div>`;
   if($('#fBranch')) $('#fBranch').onchange=loadStock;
   $('#stkSearch').oninput=renderStock;
+  if($('#stkAvail')) $('#stkAvail').onchange=renderStock;
   loadStock();
 }
 let _stockCache=[];
@@ -1026,9 +1029,9 @@ async function loadStock(){
 }
 function renderStock(){
   const q=($('#stkSearch')?.value||'').toLowerCase();
-  const sel=$('#fBranch'); const branchSel = !!(sel && sel.value && sel.value!=='ALL');   // a branch picked in the dropdown → only available
+  const availOnly = !!($('#stkAvail') && $('#stkAvail').checked);   // hide out-of-stock parts
   let rows=_stockCache.filter(s=>!q||s.part_name.toLowerCase().includes(q)||(s.vehicle||'').toLowerCase().includes(q));
-  if(branchSel) rows=rows.filter(s=>Number(s.current_qty)>0);
+  if(availOnly) rows=rows.filter(s=>Number(s.current_qty)>0);
   const low=5; const isAdmin=USER.role==='Admin';
   const headers=(isAdmin?['<input type="checkbox" onclick="toggleAllStock(this)" title="Select all">']:[])
     .concat(['Vehicle','Part','Part No','Supplier','Selling','Cost','Qty','Status']).concat(isAdmin?['']:[]);
@@ -1036,10 +1039,11 @@ function renderStock(){
     headers,
     rows.map(s=>{ const cq=Number(s.current_qty);
       const st = cq<=0?'<span class="pill red">Out</span>':cq<=low?'<span class="pill amber">Low</span>':'<span class="pill green">OK</span>';
-      return (isAdmin?[`<input type="checkbox" class="stkChk" value="${esc(s.id)}" onchange="updateStkSel()">`]:[])
+      const cells=(isAdmin?[`<input type="checkbox" class="stkChk" value="${esc(s.id)}" onchange="updateStkSel()">`]:[])
         .concat([esc(s.vehicle),esc(s.part_name),esc(s.part_no),esc(s.source),fmtINR(s.unit_price),fmtINR(s.cost_price),`<b>${cq}</b>`,st])
         .concat(isAdmin?[`<button class="sm" onclick="updatePrice('${s.id}')">Price</button> <button class="sm ghost" onclick="editStock('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteStock('${s.id}')">Delete</button>`]:[]);
-    }))}</div>` : `<p class="muted">${branchSel?'No available stock in this branch.':'No parts.'}</p>`;
+      return cq<=0?{cells,cls:'dim'}:cells;
+    }))}</div>` : `<p class="muted">${availOnly?'No available stock in this branch.':'No parts.'}</p>`;
   updateStkSel();
 }
 // ── Multi-select delete ──
@@ -1751,8 +1755,10 @@ async function saveSetting(key){
 
 /* ════════════════════ Shared UI ════════════════════ */
 function tableHTML(headers, rows){
+  // A row is either a plain array of cells, or {cells, cls} to tag the <tr>.
   return `<table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
-    <tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c==null?'—':c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    <tbody>${rows.map(r=>{const cells=Array.isArray(r)?r:r.cells;const cls=Array.isArray(r)?'':(r.cls||'');
+      return `<tr${cls?` class="${cls}"`:''}>${cells.map(c=>`<td>${c==null?'—':c}</td>`).join('')}</tr>`;}).join('')}</tbody></table>`;
 }
 function modal(title, html){
   closeModal();
