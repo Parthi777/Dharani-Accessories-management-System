@@ -46,6 +46,11 @@
   tbody tr:last-child td{border-bottom:none}
   tbody tr:hover{background:rgba(37,99,235,.06)}
   tbody tr.dim td{opacity:.5}
+  tr.invRow{cursor:pointer}
+  tr.invDet:hover{background:transparent}
+  .subTbl{margin:0;width:100%;background:rgba(37,99,235,.03)}
+  .subTbl th{position:static;background:#eef2f7;text-transform:none;font-size:11px;letter-spacing:0}
+  .subTbl td,.subTbl th{padding:6px 12px}
   .tableWrap{overflow:auto;max-height:60vh;border:1px solid var(--glass-border);border-radius:var(--radius);background:var(--panel);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);box-shadow:var(--shadow)}
   .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600}
   .pill.green{background:#dcfce7;color:#15803d} .pill.red{background:#fee2e2;color:#b91c1c}
@@ -918,7 +923,7 @@ function printCurrentInvoice(){
 function invoiceHTML(s, draft){
   const items=(s.items&&s.items.length)?s.items:[{part_name:s.part_name,part_no:s.part_no,qty:s.qty,unit_price:s.unit_price,sale_value:s.sale_value}];
   const rate=(CONFIG.gstEnabled===false?0:(Number(CONFIG.gstRate)||0));
-  let taxable=Number(s.sale_value||0), gst=0, total=taxable;
+  let taxable=(s.items&&s.items.length)?s.items.reduce((a,it)=>a+Number(it.sale_value||0),0):Number(s.sale_value||0), gst=0, total=taxable;
   if(rate>0){ if((CONFIG.gstMode||'exclusive')==='inclusive'){ taxable=total/(1+rate/100); gst=total-taxable; } else { gst=taxable*rate/100; total=taxable+gst; } }
   const rs=n=>'₹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
   const row=(a,b,bold)=>`<div style="display:flex;justify-content:space-between;${bold?'font-weight:800;border-top:1px solid #cbd5e1;margin-top:4px;padding-top:4px':''}"><span>${a}</span><span>${b}</span></div>`;
@@ -956,19 +961,59 @@ async function viewSalesList(){
   if($('#fBranch')) $('#fBranch').onchange=loadSalesList;
   loadSalesList();
 }
-let _salesCache=[];
+let _salesCache=[], _salesGroups=[];
 async function loadSalesList(){
   const r = await apiCall('GET','/sales?limit=1000&branch='+encodeURIComponent(curBranch()||'ALL'));
   if(!r.ok) return toast(r.msg,'err'); _salesCache=r.data;
-  const isAdmin=USER.role==='Admin';
-  $('#salesTbl').innerHTML = r.data.length ? `<div class="tableWrap">${tableHTML(
-    ['ID','Date','Branch','Invoice','Customer','Part','Qty','Unit','Value','Profit','Staff',''],
-    r.data.map(s=>[s.id,fmtDate(s.sale_date),s.branch,s.invoice_no||'—',s.customer_name||'—',s.part_name,s.qty,
-      fmtINR(s.unit_price),fmtINR(s.sale_value),fmtINR(s.gross_profit),s.staff_email||'—',
-      `<button class="sm ghost" onclick="printInvoice('${s.id}')">Invoice</button>`
-      +(isAdmin?` <button class="sm ghost" onclick="editSale('${s.id}')">Edit</button> <button class="sm danger" onclick="deleteSale('${s.id}')">Delete</button>`:'')]))}</div>`
-    : '<p class="muted">No sales.</p>';
+  _salesGroups=groupSales(r.data);
+  renderSalesList();
 }
+// One sale can have several parts saved as separate rows sharing branch + invoice_no.
+// Group them into a single invoice; rows without an invoice number stay on their own.
+function groupSales(rows){
+  const map=new Map();
+  for(const s of rows){
+    const inv=String(s.invoice_no||'').trim();
+    const key=(inv&&inv!=='—')?'I|'+s.branch+'|'+inv:'S|'+s.id;
+    let g=map.get(key);
+    if(!g){ g={invoice_no:(inv&&inv!=='—')?inv:'—',branch:s.branch,sale_date:s.sale_date,
+      customer:s.customer_name||'',staff:s.staff_email||'',items:[],qty:0,value:0,profit:0,sort:''}; map.set(key,g); }
+    g.items.push(s); g.qty+=Number(s.qty)||0; g.value+=Number(s.sale_value)||0; g.profit+=Number(s.gross_profit)||0;
+    if(!g.customer&&s.customer_name) g.customer=s.customer_name;
+    if(!g.staff&&s.staff_email) g.staff=s.staff_email;
+    const sk=String(s.sale_date||'')+String(s.created_at||''); if(sk>g.sort) g.sort=sk;
+  }
+  return [...map.values()].sort((a,b)=>b.sort.localeCompare(a.sort));
+}
+function renderSalesList(){
+  const box=$('#salesTbl'); if(!box) return;
+  if(!_salesGroups.length){ box.innerHTML='<p class="muted">No sales.</p>'; return; }
+  const isAdmin=USER.role==='Admin';
+  const rows=_salesGroups.map((g,i)=>{
+    const summary=`<tr class="invRow" onclick="toggleInv(${i})">
+      <td class="center"><span id="invCaret${i}" class="muted">▸</span></td>
+      <td>${fmtDate(g.sale_date)}</td><td>${esc(g.branch)}</td><td><b>${esc(g.invoice_no)}</b></td>
+      <td>${esc(g.customer||'—')}</td><td>${g.items.length} part${g.items.length>1?'s':''}</td>
+      <td>${g.qty}</td><td>${fmtINR(g.value)}</td><td>${fmtINR(g.profit)}</td><td>${esc(g.staff||'—')}</td>
+      <td class="right" onclick="event.stopPropagation()">${g.invoice_no!=='—'?`<button class="sm ghost" onclick="printInvoiceGroup(${i})">Invoice</button>`:''}</td></tr>`;
+    const detail=`<tr id="invDet${i}" class="invDet" style="display:none"><td></td><td colspan="10" style="padding:6px 0">
+      <table class="subTbl"><thead><tr><th>Part</th><th>Part No</th><th>Qty</th><th>Unit</th><th>Value</th><th>Profit</th>${isAdmin?'<th></th>':''}</tr></thead>
+      <tbody>${g.items.map(s=>`<tr>
+        <td>${esc(s.part_name)}</td><td>${s.part_no&&s.part_no!=='—'?esc(s.part_no):'—'}</td><td>${s.qty}</td>
+        <td>${fmtINR(s.unit_price)}</td><td>${fmtINR(s.sale_value)}</td><td>${fmtINR(s.gross_profit)}</td>
+        ${isAdmin?`<td class="right"><button class="sm ghost" onclick="editSale('${esc(s.id)}')">Edit</button> <button class="sm danger" onclick="deleteSale('${esc(s.id)}')">Delete</button></td>`:''}</tr>`).join('')}
+      </tbody></table></td></tr>`;
+    return summary+detail;
+  }).join('');
+  box.innerHTML=`<div class="tableWrap"><table>
+    <thead><tr><th></th><th>Date</th><th>Branch</th><th>Invoice</th><th>Customer</th><th>Parts</th><th>Qty</th><th>Value</th><th>Profit</th><th>Staff</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+function toggleInv(i){ const d=$('#invDet'+i), c=$('#invCaret'+i); if(!d) return;
+  const show=d.style.display==='none'; d.style.display=show?'':'none'; if(c) c.textContent=show?'▾':'▸'; }
+function printInvoiceGroup(i){ const g=_salesGroups[i]; if(!g) return;
+  generateInvoicePDF({ ...g.items[0], sale_value:g.value,
+    items:g.items.map(s=>({part_name:s.part_name,part_no:s.part_no,qty:s.qty,unit_price:s.unit_price,sale_value:s.sale_value})) }); }
 function editSale(id){
   const s=_salesCache.find(x=>x.id===id); if(!s) return;
   modal('Edit Sale',`
@@ -1819,7 +1864,7 @@ function generateInvoicePDF(s){
   y-=6; doc.setDrawColor(200); doc.line(L,y,R,y); y+=15;
   // ── totals (+GST) ──
   const rate=(CONFIG.gstEnabled===false?0:(Number(CONFIG.gstRate)||0));
-  let taxable=Number(s.sale_value||0), gst=0, total=taxable;
+  let taxable=(s.items&&s.items.length)?s.items.reduce((a,it)=>a+Number(it.sale_value||0),0):Number(s.sale_value||0), gst=0, total=taxable;
   if(rate>0){
     if((CONFIG.gstMode||'exclusive')==='inclusive'){ taxable=total/(1+rate/100); gst=total-taxable; }
     else { gst=taxable*rate/100; total=taxable+gst; }
