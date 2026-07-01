@@ -1417,7 +1417,8 @@ function addTransferItem(){
   const already=ex?ex.qty:0;
   if(qty+already>avail) return toast('Insufficient stock. Available '+avail+(already?', already added '+already:''),'err');
   if(ex) ex.qty+=qty;
-  else _transferItems.push({ vehicle:_transferPart.vehicle, partName:_transferPart.part_name, partNo:_transferPart.part_no, qty });
+  else _transferItems.push({ vehicle:_transferPart.vehicle, partName:_transferPart.part_name, partNo:_transferPart.part_no,
+    supplier:_transferPart.source, unitPrice:_transferPart.unit_price, qty });
   renderTransferItems();
   $('#tPart').value=''; $('#tQty').value=1; $('#tAvail').value=''; _transferPart=null;
 }
@@ -1426,10 +1427,15 @@ function renderTransferItems(){
   const box=$('#transferItems'); if(!box) return;
   if(!_transferItems.length){ box.innerHTML='<p class="muted" style="margin:8px 0">No parts added yet — pick a part and click <b>+ Add item</b>. You can transfer several parts at once.</p>'; return; }
   box.innerHTML=`<div class="tableWrap" style="max-height:none;margin-top:4px"><table>
-    <thead><tr><th>Part</th><th>Qty</th><th></th></tr></thead>
+    <thead><tr><th>Vehicle</th><th>Part</th><th>Part No</th><th>Supplier</th><th>Unit Price</th><th>Qty</th><th></th></tr></thead>
     <tbody>${_transferItems.map((it,i)=>`<tr>
-      <td>${esc(it.partName)}${it.partNo&&it.partNo!=='—'?' <span class="muted">'+esc(it.partNo)+'</span>':''}</td>
-      <td>${it.qty}</td><td class="right"><button class="sm danger" type="button" onclick="removeTransferItem(${i})">✕</button></td></tr>`).join('')}
+      <td>${esc(it.vehicle||'—')}</td>
+      <td>${esc(it.partName)}</td>
+      <td>${it.partNo&&it.partNo!=='—'?esc(it.partNo):'—'}</td>
+      <td>${esc(it.supplier||'—')}</td>
+      <td>${fmtINR(it.unitPrice)}</td>
+      <td>${it.qty}</td>
+      <td class="right"><button class="sm danger" type="button" onclick="removeTransferItem(${i})">✕</button></td></tr>`).join('')}
     </tbody></table></div>`;
 }
 function curFrom(){ const s=$('#tFrom'); return s ? s.value : USER.branch; }
