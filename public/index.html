@@ -815,7 +815,8 @@ function addSaleItem(){
   const qty=+$('#sQty').value||0, price=+$('#sPrice').value||0;
   if(qty<1) return toast('Enter a quantity','err');
   const avail=+$('#sAvail').value||0;
-  const ex=_saleItems.find(it=>it.partName===_salePart.part_name&&it.partNo===_salePart.part_no);
+  // Identity is name + part no + vehicle — same name on a different vehicle is a different item.
+  const ex=_saleItems.find(it=>it.partName===_salePart.part_name&&it.partNo===_salePart.part_no&&it.vehicle===_salePart.vehicle);
   const already=ex?ex.qty:0;
   if(qty+already>avail) return toast('Insufficient stock. Available '+avail+(already?', already added '+already:''),'err');
   if(ex){ ex.qty+=qty; ex.unitPrice=price; ex.saleValue=ex.qty*price; }      // same part → merge qty
@@ -1413,7 +1414,8 @@ function addTransferItem(){
   const qty=+$('#tQty').value||0;
   if(qty<1) return toast('Enter a quantity','err');
   const avail=+$('#tAvail').value||0;
-  const ex=_transferItems.find(it=>it.partName===_transferPart.part_name&&it.partNo===_transferPart.part_no);
+  // Identity is name + part no + vehicle — same name on a different vehicle is a different item.
+  const ex=_transferItems.find(it=>it.partName===_transferPart.part_name&&it.partNo===_transferPart.part_no&&it.vehicle===_transferPart.vehicle);
   const already=ex?ex.qty:0;
   if(qty+already>avail) return toast('Insufficient stock. Available '+avail+(already?', already added '+already:''),'err');
   if(ex) ex.qty+=qty;
